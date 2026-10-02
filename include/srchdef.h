@@ -55,6 +55,15 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-17		 2-OCT-2026	RRL
+**		Several files are searched at once, /THREADS: the THREADS
+**		member of the context; an output context may gather into the
+**		heap instead of a descriptor (MEM, SRCH$OUT_MEM, SRCH$OUT_TAKE),
+**		so that a file searched by a thread of the pool is displayed
+**		whole and in its turn; $SRCHMSG is serialized by a lock, the
+**		message subsystem not being known to be reentrant; the pool,
+**		SRCHTHR.C.
+**
 **	X01-16		 2-OCT-2026	RRL
 **		SEARCH$K_FMT_* and the FORMAT member of the context, /FORMAT;
 **		SEARCH$K_EXIT_*, the completion codes of GREP (0 a match, 1
@@ -141,11 +150,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-16"
+#define	__IDENT__	"X01-17"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.16.0"
+#define	__REV__		"1.17.0"
 #endif
 
 #ifndef	__FAC__
@@ -254,6 +263,9 @@ enum	{
 #define	SEARCH$K_MAXPRM		16		/* Maximum number of the FAO parameters		*/
 #define	SEARCH$K_MAXWIN		4096		/* Sanity ceiling for a /WINDOW half		*/
 #define	SEARCH$K_MAXDEPTH	32		/* Maximum nesting of the /RECURSIVE walk	*/
+#define	SEARCH$K_MAXTHREADS	64		/* Ceiling of /THREADS				*/
+#define	SEARCH$K_DEFTHREADS	16		/* Ceiling of the default, the processors	*/
+#define	SEARCH$K_INFLIGHT	8		/* Files queued or searched ahead, per thread	*/
 
 #define	SEARCH$K_DEFWIN		1		/* /WINDOW given without a value		*/
 #define	SEARCH$K_DEFROWS	24		/* Height of the page, no terminal to ask	*/
@@ -369,6 +381,10 @@ typedef	struct	srch_out_t
 			lineno,			/* Records displayed on the current page	*/
 			col;			/* Current column, for the wrapped records	*/
 
+	char *		mem;			/* FD < 0: the heap area the output gathers in	*/
+	size_t		memlen,			/* Bytes gathered there				*/
+			memmax;			/* Capacity of the area				*/
+
 	char		buf [SEARCH$K_SZ_OUT];	/* The buffer itself				*/
 } SEARCH$OUT;
 
@@ -422,6 +438,7 @@ typedef	struct	srch_ctx_t
 	int		exact;			/* /EXACT: the case is significant		*/
 	int		binary;			/* SEARCH$K_BIN_*, /BINARY			*/
 	int		format;			/* SEARCH$K_FMT_*, /FORMAT			*/
+	unsigned	threads;		/* /THREADS: files searched at once, 1 - serial	*/
 	int		numbers;		/* /NUMBERS: prefix the record number		*/
 	int		heading;		/* /HEADING: announce every file		*/
 	int		log;			/* /LOG: report every file searched		*/
@@ -487,7 +504,8 @@ typedef	struct	srch_rab_t
 #error	"UTILITY_ROUTINES.H of UTILS V.01-24 or later is required: $PUTMSG_FAO is missing"
 #endif
 
-#define	$SRCHMSG(a_sts, ...)	srch$note((int) $PUTMSG_FAO((a_sts), ##__VA_ARGS__))
+#define	$SRCHMSG(a_sts, ...)	({ int __srch_sts; srch$msglock(); __srch_sts = (int) $PUTMSG_FAO((a_sts), ##__VA_ARGS__); \
+					srch$msgunlock(); srch$note(__srch_sts); })
 #define	$SRCHPUT(out, fmt, ...)	srch$put((out), (fmt), FAO$_NARG(__VA_ARGS__) FAO$_EACH(__VA_ARGS__))
 
 /*
@@ -495,6 +513,10 @@ typedef	struct	srch_rab_t
 **  and time services shared by the whole facility.
 */
 int	srch$inimsg	(void);
+void	srch$msglock	(void);
+void	srch$msgunlock	(void);
+int	srch$out_mem	(SEARCH$OUT *a_out);
+int	srch$out_take	(SEARCH$OUT *a_out, char **a_mem, size_t *a_len);
 int	srch$note	(int a_sts);
 int	srch$errors	(void);
 int	srch$out_init	(SEARCH$OUT *a_out, int a_fd);
@@ -529,6 +551,16 @@ int	srch$help	(int a_wordcnt, char **a_words, int a_page);
 */
 int	srch$addstr	(SEARCH$CTX *a_ctx, const char *a_str);
 int	srch$file	(SEARCH$CTX *a_ctx, const char *a_fspec);
+
+/*
+**  SRCHTHR.C - the pool of threads of /THREADS: the files the walk picks
+**  are queued, searched at once into the heap, and displayed whole and in
+**  the order the walk picked them, so that the result is the one a single
+**  thread produces.
+*/
+int	srch$pool_init	(SEARCH$CTX *a_ctx, unsigned a_threads);
+int	srch$pool_file	(const char *a_fspec, void *a_arg);
+int	srch$pool_drain	(void);
 
 #ifdef	__cplusplus
 	}

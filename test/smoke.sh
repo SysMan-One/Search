@@ -21,6 +21,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 2-OCT-2026	RRL	X-12 : The checks of /THREADS: a tree of many
+#					files searched by 1 and by 8 threads is
+#					displayed byte for byte alike.
+#
 #		 2-OCT-2026	RRL	X-11 : The checks of /FORMAT=GREP - the lines of
 #					GREP -n, the window and the parting "--"
 #					- and of the completion codes 0, 1, 2.
@@ -514,6 +518,41 @@ if [ "`id -u`" != "0" ] ; then
 fi
 
 rm -f fmt.txt fmt.want
+
+#
+#	/THREADS: the display of a pool is that of a single thread, byte for
+#	byte - a tree of files of every size, some matching, some not
+#
+mkdir -p thr/a/b thr/c
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 ; do
+	awk -v n=$i 'BEGIN { for (r = 1; r <= n * 50; r++) print (r % (n + 2)) ? "plain " r : "the alpha of " n " at " r }' > thr/f$i.txt
+	cp thr/f$i.txt thr/a/g$i.txt
+	cp thr/f$i.txt thr/a/b/h$i.txt
+done
+echo "nothing here" > thr/c/none.txt
+
+$SEARCH 'thr/*.txt' alpha /RECURSIVE /NUMBERS /WINDOW=1 /THREADS=1 > thr1.out 2>&1
+$SEARCH 'thr/*.txt' alpha /RECURSIVE /NUMBERS /WINDOW=1 /THREADS=8 > thr8.out 2>&1
+
+if [ -s thr1.out ] && cmp -s thr1.out thr8.out
+	then ok "/THREADS=8 displays what a single thread does"
+	else ko "/THREADS=8 displays what a single thread does"
+fi
+
+$SEARCH 'thr/*.txt' alpha /RECURSIVE /FORMAT=GREP /THREADS=1 > thr1.out 2>&1
+$SEARCH 'thr/*.txt' alpha /RECURSIVE /FORMAT=GREP /THREADS=8 > thr8.out 2>&1
+
+if [ -s thr1.out ] && cmp -s thr1.out thr8.out
+	then ok "/THREADS=8 /FORMAT=GREP displays what a single thread does"
+	else ko "/THREADS=8 /FORMAT=GREP displays what a single thread does"
+fi
+
+if $SEARCH 'thr/*.txt' alpha /THREADS=0 > /dev/null 2>&1
+	then ko "/THREADS=0 is refused"
+	else ok "/THREADS=0 is refused"
+fi
+
+rm -rf thr thr1.out thr8.out
 
 echo "%SEARCH-I-SMOKE, $CHECK check(s), $FAILED failure(s)"
 

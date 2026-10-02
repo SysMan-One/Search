@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-27"
-#define	__REV__		"1.27.0"
+#define	__IDENT__	"X01-28"
+#define	__REV__		"1.28.0"
 
 /*
 **++
@@ -48,6 +48,8 @@
 **					(default), SKIP it, or search it as TEXT
 **		    /FORMAT=option	VMS (default), or GREP: spec:number:record
 **					one line a record, for a tool to read
+**		    /THREADS[=n]	search n files at once, the display that
+**					of a single thread; default the processors
 **		    /HELP		display the syntax
 **
 **		The first word that is not a qualifier is the list of the
@@ -111,6 +113,13 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-28		 2-OCT-2026	RRL
+**		/THREADS[=n]: the files the walk picks are searched by a pool
+**		of n threads (SRCHTHR.C) and displayed in the order of the
+**		walk, so the display is that of a single thread.  The default
+**		is the number of the processors, at most 16; /THREADS=1, /LOG
+**		and /PAGE run the walk in the main thread alone, as before.
 **
 **	X01-27		 2-OCT-2026	RRL
 **		/FORMAT=VMS|GREP: GREP displays spec:number:record, one line a
@@ -261,6 +270,7 @@ enum	{
 	SEARCH$K_QUAL_RECURSIVE,
 	SEARCH$K_QUAL_BINARY,
 	SEARCH$K_QUAL_FORMAT,
+	SEARCH$K_QUAL_THREADS,
 	SEARCH$K_QUAL_HELP,
 
 	SEARCH$K_QUAL_MAX
@@ -336,6 +346,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("RECURSIVE")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL,	.flag = CLI$M_NEGATABLE },
 	{ .name = {$ASCINI("BINARY")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_binkwd },
 	{ .name = {$ASCINI("FORMAT")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_fmtkwd },
+	{ .name = {$ASCINI("THREADS")},		.type = CLI$K_NUM,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("HELP")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = { .len = 0 } }
 	};
@@ -377,6 +388,8 @@ static	const char	s_usage [] = {
 	"                        SKIP it, or search it as TEXT\n"
 	"    /FORMAT=option      VMS (default): headings and records; GREP:\n"
 	"                        spec:number:record, one line each, for tools\n"
+	"    /THREADS[=n]        search n files at once (default: the processors,\n"
+	"                        at most 16); the display is that of one thread\n"
 	"    /HELP               display this text\n"
 	"\n"
 	"A search string is a plain substring; a file specification is expanded\n"
@@ -759,6 +772,20 @@ int		l_wincnt = 0;
 
 			if ( !(1 & s_search$cvtkwd(s_binkwd, l_str, &a_ctx->binary)) )
 				return	$SRCHMSG(SEARCH$_IVQUAL, l_str, "BINARY");
+			}
+		}
+
+	/* ... /THREADS, the number of the files searched at once ... */
+	if ( 1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_THREADS], NULL) )
+		{
+		if ( 1 & __cli$get_value(a_clictx, &s_quals[SEARCH$K_QUAL_THREADS], &l_val) )
+			{
+			__util$asc2str(&l_val, l_str);
+
+			a_ctx->threads	= (unsigned) strtoul(l_str, NULL, 0);
+
+			if ( !a_ctx->threads || (a_ctx->threads > SEARCH$K_MAXTHREADS) )
+				return	$SRCHMSG(SEARCH$_IVQUAL, l_str, "THREADS");
 			}
 		}
 
@@ -1350,9 +1377,31 @@ int		l_status, l_fd = STDOUT_FILENO;
 			if ( *l_p == '?' )
 				*l_p	= '%';
 
+	/*
+	**  The pool of /THREADS.  Without the qualifier the run takes as many
+	**  threads as there are processors, at most SEARCH$K_DEFTHREADS.  The
+	**  walk is made by the main thread alone - exactly as without a pool -
+	**  when one thread is asked for, under /LOG, which reports every file
+	**  in the order of the walk as it is searched, and under /PAGE, whose
+	**  pager has to see the records as they come.
+	*/
+	if ( !l_ctx.threads )
+		{
+		long	l_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+
+		l_ctx.threads	= (l_cpus < 1) ? 1 : (l_cpus > SEARCH$K_DEFTHREADS) ? SEARCH$K_DEFTHREADS : (unsigned) l_cpus;
+		}
+
+	if ( l_ctx.log || l_out.page )
+		l_ctx.threads	= 1;
+
+	if ( (l_ctx.threads > 1) && !(1 & srch$pool_init(&l_ctx, l_ctx.threads)) )
+		l_ctx.threads	= 1;
+
 	for ( unsigned i = 0; i < l_elemcnt; i++ )
 		{
-		l_status	= srch$forfiles(l_elem [i], &l_sel, s_search$onefile, &l_ctx);
+		l_status	= srch$forfiles(l_elem [i], &l_sel,
+					(l_ctx.threads > 1) ? srch$pool_file : s_search$onefile, &l_ctx);
 
 		if ( l_status == STS$K_WARN )
 			$SRCHMSG(SEARCH$_NOFILES, l_elem [i]);
@@ -1361,6 +1410,10 @@ int		l_status, l_fd = STDOUT_FILENO;
 		if ( l_status == STS$K_FATAL )
 			break;
 		}
+
+	/* The files still queued are displayed, in their turn, before anything is reported */
+	if ( l_ctx.threads > 1 )
+		srch$pool_drain();
 
 	srch$msec(&l_end);
 	l_ctx.stat.msec	= (l_end > l_beg) ? (l_end - l_beg) : 0;

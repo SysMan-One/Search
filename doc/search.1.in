@@ -222,6 +222,17 @@ one line each, as
 does, for a tool to read: no heading, every record numbered, a record of
 the window parted by hyphens, two runs parted by a line \(lq\-\-\(rq.
 .TP
+.BI /THREADS= n
+Search
+.I n
+files at once, 1 to 64; without the qualifier as many as there are
+processors, at most 16.  The files are displayed whole and in the order the
+walk picked them, so the display is that of a single thread.
+.B /LOG
+and
+.B /PAGE
+run the walk in a single thread.
+.TP
 .BI /HELP " [topic]"
 Display the description of the utility -- the help library of the
 product -- and stop.  The words that follow name a topic within it:

@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHUTL"
-#define	__IDENT__	"X01-08"
-#define	__REV__		"1.8.0"
+#define	__IDENT__	"X01-09"
+#define	__REV__		"1.9.0"
 
 /*
 **++
@@ -31,6 +31,12 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-09		 2-OCT-2026	RRL
+**		For /THREADS: an output context over no descriptor gathers into
+**		the heap (SRCH$OUT_MEM, SRCH$OUT_TAKE, S_SRCH$EMIT), and the
+**		message subsystem is entered under a lock (SRCH$MSGLOCK,
+**		SRCH$MSGUNLOCK), its reentrancy not being known.
 **
 **	X01-08		 2-OCT-2026	RRL
 **		SRCH$NOTE and SRCH$ERRORS: every condition signalled by
@@ -73,6 +79,7 @@
 #include	<unistd.h>
 #include	<sys/ioctl.h>
 #include	<fcntl.h>
+#include	<pthread.h>
 
 #include	"srchdef.h"
 
@@ -229,6 +236,84 @@ const char *	l_ptr = a_buf;
 **	STS$K_WARN	- a catalogue of this facility is registered already.
 **--
 */
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Put out a block of an output context: to its descriptor, or - for a
+**	context made by SRCH$OUT_MEM, whose descriptor is negative - to the
+**	heap area it gathers in, which doubles as it fills.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_out		The output context
+**	a_len		Length of the block
+**	a_buf		The block
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	Writes to the descriptor, or grows MEM of the context.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- the block has gone out;
+**	STS$K_ERROR	- WRITE(2) failed or the heap refused, logged.
+**--
+*/
+static	int	s_srch$emit	(
+		SEARCH$OUT *	a_out,
+		unsigned	a_len,
+	const	char *		a_buf
+			)
+{
+	if ( a_out->fd >= 0 )
+		return	s_srch$write(a_out->fd, a_len, a_buf);
+
+	if ( (a_out->memlen + a_len) > a_out->memmax )
+		{
+		size_t	l_max = a_out->memmax ? a_out->memmax : SEARCH$K_SZ_OUT;
+		char *	l_new;
+
+		while ( l_max < (a_out->memlen + a_len) )
+			l_max	*= 2;
+
+		if ( !(l_new = realloc(a_out->mem, l_max)) )
+			return	$LOG(STS$K_ERROR, "realloc(%zu), errno=%d (%s)", l_max, errno, strerror(errno));
+
+		a_out->mem	= l_new;
+		a_out->memmax	= l_max;
+		}
+
+	memcpy(a_out->mem + a_out->memlen, a_buf, a_len);
+	a_out->memlen	+= a_len;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**  The lock the message subsystem is entered under.  The subsystem of the
+**  STARLET library is not known to be reentrant, and under /THREADS a
+**  message may be signalled by several threads at once.
+*/
+static	pthread_mutex_t	s_msglock = PTHREAD_MUTEX_INITIALIZER;
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Take and release the lock of the message subsystem - see $SRCHMSG.
+**--
+*/
+void	srch$msglock	(void)
+{
+	pthread_mutex_lock(&s_msglock);
+}
+
+void	srch$msgunlock	(void)
+{
+	pthread_mutex_unlock(&s_msglock);
+}
+
+
 int	srch$inimsg	(void)
 {
 	__util$setlogfd(STDERR_FILENO);
@@ -411,6 +496,82 @@ int	srch$out_page	(
 **	Whatever the flush returned.
 **--
 */
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Initialize an output context that gathers into the heap rather than
+**	writing to a descriptor: a file searched by a thread of the pool is
+**	displayed whole, in its turn, out of what its context has gathered.
+**	Such a context is never a terminal and is never paged.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_out		The context to be initialized
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS always.
+**--
+*/
+int	srch$out_mem	(
+		SEARCH$OUT *	a_out
+			)
+{
+	memset(a_out, 0, sizeof(SEARCH$OUT));
+
+	a_out->fd	= -1;
+	a_out->ttyin	= -1;
+	a_out->rows	= SEARCH$K_DEFROWS;
+	a_out->cols	= SEARCH$K_DEFCOLS;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Hand over what an output context made by SRCH$OUT_MEM has gathered:
+**	the buffer is flushed into the heap area first, and the area passes
+**	to the caller, who frees it; the context is left empty.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_out		The output context
+**	a_mem		Receives the area, NULL when nothing was gathered
+**	a_len		Receives its length, bytes
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS, or the status of the last flush.
+**--
+*/
+int	srch$out_take	(
+		SEARCH$OUT *	a_out,
+		char **		a_mem,
+		size_t *	a_len
+			)
+{
+int		l_status;
+
+	l_status	= srch$flush(a_out);
+
+	*a_mem		= a_out->mem;
+	*a_len		= a_out->memlen;
+
+	a_out->mem	= NULL;
+	a_out->memlen	= a_out->memmax = 0;
+
+	return	l_status;
+}
+
+
 int	srch$out_final	(
 		SEARCH$OUT *	a_out
 			)
@@ -487,7 +648,7 @@ int		l_status;
 	if ( !a_out->len )
 		return	STS$K_SUCCESS;
 
-	l_status	= s_srch$write(a_out->fd, a_out->len, a_out->buf);
+	l_status	= s_srch$emit(a_out, a_out->len, a_out->buf);
 	a_out->len	= 0;
 
 	return	l_status;
@@ -684,7 +845,7 @@ int		l_status;
 
 	/* An over-long block bypasses the buffer altogether */
 	if ( a_len > sizeof(a_out->buf) )
-		return	s_srch$write(a_out->fd, a_len, a_buf);
+		return	s_srch$emit(a_out, a_len, a_buf);
 
 	memcpy(a_out->buf + a_out->len, a_buf, a_len);
 	a_out->len	+= a_len;

@@ -403,6 +403,26 @@ No heading is put out, and the records are numbered whatever
 hyphen instead of a colon, two runs of records by a line "--", and
 a binary file is reported as "Binary file spec matches".
 
+## /THREADS -- search several files at once
+
+```
+/THREADS=n       n files are searched at once, 1 to 64
+```
+
+The files the walk picks are searched by a pool of threads and
+displayed whole, each in its turn, in the order the walk picked
+them: the display, the numbers and the totals of /STATISTICS are
+those of a single thread, byte for byte. Without the qualifier as
+many threads are taken as there are processors, at most 16.
+
+/THREADS=1 searches every file in the main thread, one after the
+other, and so does a run under /LOG, which reports every file in
+the order of the walk as it is searched, or under /PAGE, whose
+pager has to see the records as they come. A diagnostic of a file -
+it cannot be opened, a record is too long - is signalled as it
+happens, so two diagnostics may come in an order other than that of
+the walk.
+
 ## /HELP -- display the description
 
 Displays the description of the utility -- this very library -- and

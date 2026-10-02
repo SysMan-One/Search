@@ -13,6 +13,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 2-OCT-2026	RRL	X-23 : src/srchthr.c, the pool of threads of
+#					/THREADS; the image links Threads::Threads.
 #		 2-OCT-2026	RRL	X-22 : The help libraries are translated
 #					NOFACILITY.  HELP_ADD_LIBRARY() roots a
 #					library at the project name by default;
@@ -294,12 +296,15 @@ add_executable(search
 	src/srchutl.c
 	src/srchfil.c
 	src/srchmat.c
+	src/srchthr.c
 	src/srchhlp.c)
+
+find_package(Threads REQUIRED)
 
 target_include_directories(search PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_link_libraries(search PRIVATE StarLet::starlet search_options)
+target_link_libraries(search PRIVATE StarLet::starlet search_options Threads::Threads)
 
 #
 #	The name of a macro carrying a '$' is expanded away by MAKE before
