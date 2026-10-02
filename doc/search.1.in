@@ -227,7 +227,14 @@ Search
 .I n
 files at once, 1 to 64; without the qualifier as many as there are
 processors, at most 16.  The files are displayed whole and in the order the
-walk picked them, so the display is that of a single thread.
+walk picked them, so the display is that of a single thread.  A single file
+of 32 MB or more is cut into pieces at record boundaries and searched by
+several threads at once, under
+.B /MATCH=OR
+or
+.B AND
+without
+.BR /WINDOW .
 .B /LOG
 and
 .B /PAGE

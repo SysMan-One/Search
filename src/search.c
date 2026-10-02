@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-28"
-#define	__REV__		"1.28.0"
+#define	__IDENT__	"X01-29"
+#define	__REV__		"1.29.0"
 
 /*
 **++
@@ -113,6 +113,11 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-29		 2-OCT-2026	RRL
+**		Under /THREADS a single file of 32 MB or more is searched in
+**		pieces by several threads at once - see SRCHMAT X01-14;
+**		nothing in this module changed but the ident.
 **
 **	X01-28		 2-OCT-2026	RRL
 **		/THREADS[=n]: the files the walk picks are searched by a pool

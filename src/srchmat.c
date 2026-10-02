@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHMAT"
-#define	__IDENT__	"X01-13"
-#define	__REV__		"1.13.0"
+#define	__IDENT__	"X01-14"
+#define	__REV__		"1.14.0"
 
 /*
 **++
@@ -43,6 +43,19 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-14		 2-OCT-2026	RRL
+**		Under /THREADS a mapped file of SEARCH$K_SPLITMIN or more is
+**		searched in pieces, cut at record boundaries, by several
+**		threads at once (S_SRCH$SPLIT, S_SRCH$PIECE); where numbers are
+**		to be shown, the records of every piece are counted first, in
+**		parallel too.  The pieces are displayed in their order, so the
+**		display is that of one thread.  Only /MATCH=OR and AND without
+**		/WINDOW, and not a binary file noted by /BINARY=NOTE.  The
+**		threads of all the files split at once never exceed /THREADS.
+**		The heading has a routine of its own, S_SRCH$HEADING.  A file
+**		of 4 GB or more is read rather than mapped: the length of a
+**		mapping is held in 32 bits.
 **
 **	X01-13		 2-OCT-2026	RRL
 **		/FORMAT=GREP: a record is displayed as spec:number:record, a
@@ -135,6 +148,7 @@
 #include	<unistd.h>
 #include	<sys/stat.h>
 #include	<sys/mman.h>
+#include	<pthread.h>
 
 #include	"srchdef.h"
 
@@ -993,6 +1007,379 @@ char *	l_new;
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
+**	Announce a file before its first displayed record: an asterisk rule,
+**	the specification and the time stamp the selection has worked on.
+**	Nothing is announced under /NOHEADING or /FORMAT=GREP.
+**
+**	The time stands in a column of its own, so that a run over several
+**	files reads as a listing; a specification too long for the column
+**	pushes it right rather than being cut to fit.  The time is a
+**	quadword and goes to !%D BY VALUE, per STARLET X.01-09.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_ctx		The search context
+**	a_fspec		The specification of the file, ASCIZ
+**	a_tim		Its time stamp
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	Writes to the output context.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS, or the status of the output.
+**--
+*/
+static	int	s_srch$heading	(
+		SEARCH$CTX *	a_ctx,
+	const	char *		a_fspec,
+		fao_time_t	a_tim
+			)
+{
+unsigned	l_namlen, l_pad;
+
+	if ( !a_ctx->heading || (a_ctx->format == SEARCH$K_FMT_GREP) )
+		return	STS$K_SUCCESS;
+
+	l_namlen	= (unsigned) strlen(a_fspec);
+	l_pad		= (l_namlen < SEARCH$K_HDRNAME) ? (SEARCH$K_HDRNAME - l_namlen) : 2;
+
+	$SRCHPUT(a_ctx->out, "\n!#**\n!AZ", SEARCH$K_HDRWIDTH, a_fspec);
+
+	return	$SRCHPUT(a_ctx->out, "!#* !%D\n\n", l_pad, a_tim);
+}
+
+
+/*
+**  One piece of a file searched by several threads at once.
+*/
+typedef	struct	srch_piece_t
+{
+	SEARCH$CTX *	ctx;			/* The context of the file, read only		*/
+	const char *	fspec;			/* The specification of the file		*/
+	const char *	beg,			/* First byte of the piece, a record's first	*/
+		   *	end;			/* Byte past its last, a record's terminator +1	*/
+	int		count;			/* Count the records only, the first pass	*/
+	int		needcnt;		/* Records are numbered: count the skipped ones	*/
+	uint64_t	base,			/* Records of the file before the piece		*/
+			records,		/* Terminators in the piece, the first pass	*/
+			matched;		/* Records of the piece that matched		*/
+	SEARCH$STAT	stat;			/* The counters of the piece			*/
+	char *		mem;			/* Its display, gathered into the heap		*/
+	size_t		memlen;			/* Its length					*/
+} SEARCH$PIECE;
+
+/*
+**  The threads that may run pieces at once, over all the files split at
+**  the same time: /THREADS of the run, set by the first split.
+*/
+static	int	s_pieces = -1;
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Search one piece of a mapped file, as SRCH$FILE searches a whole
+**	one under the prefilter: a region of SEARCH$K_SZ_BLK that carries
+**	none of the strings is stepped over, its records counted if they are
+**	numbered; the records of one that does are matched one by one and
+**	displayed into the heap.  The first pass of a split only counts the
+**	terminators of the piece, so that the next pieces know where their
+**	numbering starts.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_arg		The piece, SEARCH$PIECE
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	The mapping of the file, read only.
+**
+**  RETURN VALUE:
+**	NULL; the piece carries the result.
+**--
+*/
+static	void *	s_srch$piece	(
+		void *		a_arg
+			)
+{
+SEARCH$PIECE *	l_pc = (SEARCH$PIECE *) a_arg;
+SEARCH$CTX	l_ctx;
+SEARCH$OUT	l_out;
+const char *	l_pos = l_pc->beg, *l_regend, *l_nl, *l_top;
+uint64_t	l_recnum = l_pc->base;
+char *		l_mark = NULL;
+unsigned	l_markmax = 0, l_reclen, l_reglen;
+
+	if ( l_pc->count )
+		{
+		l_pc->records	= s_srch$nlcount((unsigned) (l_pc->end - l_pc->beg), l_pc->beg);
+
+		return	NULL;
+		}
+
+	memcpy(&l_ctx, l_pc->ctx, sizeof(SEARCH$CTX));
+	memset(&l_ctx.stat, 0, sizeof(l_ctx.stat));
+
+	srch$out_mem(&l_out);
+	l_ctx.out	= &l_out;
+
+	while ( l_pos < l_pc->end )
+		{
+		/*
+		**  The region ahead, up to the last terminator within
+		**  SEARCH$K_SZ_BLK; a record longer than that is a region of
+		**  its own.
+		*/
+		l_top	= ((size_t) (l_pc->end - l_pos) > SEARCH$K_SZ_BLK) ? (l_pos + SEARCH$K_SZ_BLK) : l_pc->end;
+
+		if ( (l_nl = memrchr(l_pos, '\n', (size_t) (l_top - l_pos))) )
+			{
+			l_reglen	= (unsigned) (l_nl - l_pos) + 1;
+
+			if ( !(1 & s_srch$blkhas(&l_ctx, l_reglen, l_pos)) )
+				{
+				if ( l_pc->needcnt )
+					{
+					uint64_t	l_cnt = s_srch$nlcount(l_reglen, l_pos);
+
+					l_ctx.stat.recsread	+= l_cnt;
+					l_recnum		+= l_cnt;
+					}
+
+				l_ctx.stat.chars	+= l_reglen;
+				l_pos			+= l_reglen;
+
+				continue;
+				}
+
+			l_regend	= l_nl + 1;
+			}
+		else	l_regend	= (l_nl = memchr(l_pos, '\n', (size_t) (l_pc->end - l_pos))) ? (l_nl + 1) : l_pc->end;
+
+		/* The records of a region that carries a string, one by one */
+		while ( l_pos < l_regend )
+			{
+			l_nl		= memchr(l_pos, '\n', (size_t) (l_regend - l_pos));
+			l_reclen	= (unsigned) ((l_nl ? l_nl : l_regend) - l_pos);
+
+			l_recnum++;
+			l_ctx.stat.recsread++;
+			l_ctx.stat.chars	+= l_reclen + 1;
+
+			if ( 1 & s_srch$match(&l_ctx, l_reclen, l_pos) )
+				{
+				l_pc->matched++;
+				l_ctx.stat.recsmatched++;
+
+				s_srch$putrec(&l_ctx, l_pc->fspec, ':', l_recnum, l_reclen, l_pos,
+					(l_ctx.hilite && (1 & s_srch$markbuf(&l_mark, &l_markmax, l_reclen))) ? l_mark : NULL);
+				}
+
+			l_pos	= l_nl ? (l_nl + 1) : l_regend;
+			}
+		}
+
+	srch$out_take(&l_out, &l_pc->mem, &l_pc->memlen);
+	l_pc->stat	= l_ctx.stat;
+
+	free(l_mark);
+
+	return	NULL;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Run the pieces of a split, each by a thread of its own; a piece
+**	whose thread cannot be created is run by the caller, after the
+**	others have been started.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_cnt		Number of the pieces
+**	a_pcs		The pieces
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	None.
+**--
+*/
+static	void	s_srch$runpieces	(
+		unsigned	a_cnt,
+		SEARCH$PIECE *	a_pcs
+			)
+{
+pthread_t	l_tids [SEARCH$K_MAXTHREADS];
+int		l_made [SEARCH$K_MAXTHREADS] = {0};
+
+	for ( unsigned i = 0; i < a_cnt; i++ )
+		l_made [i]	= !pthread_create(&l_tids [i], NULL, s_srch$piece, &a_pcs [i]);
+
+	for ( unsigned i = 0; i < a_cnt; i++ )
+		if ( !l_made [i] )
+			s_srch$piece(&a_pcs [i]);
+
+	for ( unsigned i = 0; i < a_cnt; i++ )
+		if ( l_made [i] )
+			pthread_join(l_tids [i], NULL);
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Search a large mapped file by several threads at once.  The mapping
+**	is cut into pieces at record boundaries; where the records are
+**	numbered, the terminators of every piece are counted first, in
+**	parallel, so that every piece knows the number its records start
+**	from; then every piece is searched into the heap, and the pieces
+**	are displayed in their order after the heading - the display of a
+**	single thread, byte for byte.
+**
+**	The threads are taken from a budget shared by every file split at
+**	the same time, /THREADS of the run; with fewer than two to be had,
+**	or a file too small for two pieces, nothing is done and the caller
+**	searches the file the usual way.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_ctx		The search context of the file
+**	a_fspec		The specification of the file, ASCIZ
+**	a_tim		Its time stamp, for the heading
+**	a_map		The mapping of the file
+**	a_len		Its length
+**	a_needcnt	The records are numbered
+**	a_matched	Receives the number of the records that matched
+**	a_records	Receives the number of the records, where counted
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	S_PIECES; writes to the output context, adds to the counters.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- the file has been searched;
+**	STS$K_WARN	- it has not, the caller is to search it.
+**--
+*/
+static	int	s_srch$split	(
+		SEARCH$CTX *	a_ctx,
+	const	char *		a_fspec,
+		fao_time_t	a_tim,
+	const	char *		a_map,
+		size_t		a_len,
+		int		a_needcnt,
+		uint64_t *	a_matched,
+		uint64_t *	a_records
+			)
+{
+SEARCH$PIECE	l_pcs [SEARCH$K_MAXTHREADS] = {0};
+unsigned	l_want, l_cnt = 0;
+int		l_avail, l_init = -1;
+const char *	l_beg = a_map, *l_end = a_map + a_len, *l_cut;
+uint64_t	l_base = 0;
+
+	/* The budget is set once, by the first file split: /THREADS of the run */
+	__atomic_compare_exchange_n(&s_pieces, &l_init, (int) a_ctx->threads, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+
+	l_want	= (unsigned) (a_len / SEARCH$K_SPLITPIECE);
+
+	if ( l_want > a_ctx->threads )
+		l_want	= a_ctx->threads;
+
+	if ( l_want > SEARCH$K_MAXTHREADS )
+		l_want	= SEARCH$K_MAXTHREADS;
+
+	/* As many threads as the budget lets go of, two at least */
+	l_avail	= __atomic_load_n(&s_pieces, __ATOMIC_RELAXED);
+
+	do	{
+		if ( (l_avail < 2) || (l_want < 2) )
+			return	STS$K_WARN;
+
+		l_cnt	= ((unsigned) l_avail < l_want) ? (unsigned) l_avail : l_want;
+		}
+	while ( !__atomic_compare_exchange_n(&s_pieces, &l_avail, l_avail - (int) l_cnt, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED) );
+
+	/* The cuts: about A_LEN / L_CNT apart, each moved past the next terminator */
+	for ( unsigned i = 0; i < l_cnt; i++ )
+		{
+		l_cut	= (i == (l_cnt - 1)) ? l_end : (a_map + (a_len / l_cnt) * (i + 1));
+
+		if ( l_cut < l_beg )
+			l_cut	= l_beg;
+
+		if ( l_cut < l_end )
+			{
+			const char *	l_nl = memchr(l_cut, '\n', (size_t) (l_end - l_cut));
+
+			l_cut	= l_nl ? (l_nl + 1) : l_end;
+			}
+
+		l_pcs [i].ctx		= a_ctx;
+		l_pcs [i].fspec		= a_fspec;
+		l_pcs [i].beg		= l_beg;
+		l_pcs [i].end		= l_cut;
+		l_pcs [i].needcnt	= a_needcnt;
+
+		l_beg	= l_cut;
+		}
+
+	/* The first pass, where the records are numbered: the terminators of every piece */
+	if ( a_needcnt )
+		{
+		for ( unsigned i = 0; i < l_cnt; i++ )
+			l_pcs [i].count	= 1;
+
+		s_srch$runpieces(l_cnt, l_pcs);
+
+		for ( unsigned i = 0; i < l_cnt; i++ )
+			{
+			l_pcs [i].count	= 0;
+			l_pcs [i].base	= l_base;
+			l_base		+= l_pcs [i].records;
+			}
+		}
+
+	s_srch$runpieces(l_cnt, l_pcs);
+
+	__atomic_add_fetch(&s_pieces, (int) l_cnt, __ATOMIC_ACQ_REL);
+
+	/* The display: the heading, if anything matched, then the pieces in their order */
+	*a_matched	= 0;
+	*a_records	= 0;
+
+	for ( unsigned i = 0; i < l_cnt; i++ )
+		*a_matched	+= l_pcs [i].matched;
+
+	if ( *a_matched )
+		s_srch$heading(a_ctx, a_fspec, a_tim);
+
+	for ( unsigned i = 0; i < l_cnt; i++ )
+		{
+		if ( l_pcs [i].memlen )
+			srch$put_raw(a_ctx->out, (unsigned) l_pcs [i].memlen, l_pcs [i].mem);
+
+		free(l_pcs [i].mem);
+
+		a_ctx->stat.recsread	+= l_pcs [i].stat.recsread;
+		a_ctx->stat.recsmatched	+= l_pcs [i].stat.recsmatched;
+		a_ctx->stat.chars	+= l_pcs [i].stat.chars;
+		a_ctx->stat.lines	+= l_pcs [i].stat.lines;
+
+		*a_records	+= l_pcs [i].stat.recsread;
+		}
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
 **	Search one file and display every record that satisfies the match,
 **	together with the window of records asked for by /WINDOW.
 **
@@ -1024,7 +1411,7 @@ SEARCH$RING *	l_ring = NULL;
 const char *	l_rec = NULL;
 char *		l_mark = NULL;
 uint64_t	l_matched = 0, l_lastput = 0, l_first;
-unsigned	l_reclen = 0, l_slot = 0, l_pending = 0, l_ringcnt = 0, l_namlen, l_pad;
+unsigned	l_reclen = 0, l_slot = 0, l_pending = 0, l_ringcnt = 0;
 const char *	l_cleanend = NULL;
 uint64_t	l_seen = 0;
 int		l_status, l_fd, l_heading = 0, l_longrec = 0;
@@ -1134,7 +1521,7 @@ unsigned	l_markmax = 0;
 		**  the copying the mapping was to spare.  A walk of a large
 		**  tree is made of exactly such files.
 		*/
-		if ( S_ISREG(l_st.st_mode) && (l_st.st_size >= SEARCH$K_MAPMIN) )
+		if ( S_ISREG(l_st.st_mode) && (l_st.st_size >= SEARCH$K_MAPMIN) && ((uint64_t) l_st.st_size <= UINT32_MAX) )
 			{
 			void *	l_map = mmap(NULL, (size_t) l_st.st_size, PROT_READ, MAP_PRIVATE, l_fd, 0);
 
@@ -1181,6 +1568,22 @@ unsigned	l_markmax = 0;
 			l_rab->pos	= l_rab->len;
 			l_rab->eof	= 1;
 			}
+		}
+
+	/*
+	**  A large mapped file under /THREADS is searched in pieces by several
+	**  threads at once - only where the records are looked at one by one
+	**  with no regard to their neighbours: /MATCH=OR or AND, no /WINDOW
+	**  (which is what L_PREFILT says), and not a binary file, whose first
+	**  match is all that is to be said of it or which is to be left alone.
+	**  The loop below then finds the file exhausted.
+	*/
+	if ( l_prefilt && l_rab->mapped && (a_ctx->threads > 1) && (l_rab->len >= SEARCH$K_SPLITMIN)
+		&& !(l_binary && (a_ctx->binary != SEARCH$K_BIN_TEXT))
+		&& (1 & s_srch$split(a_ctx, a_fspec, l_tim, l_rab->buf, l_rab->len, l_needcnt, &l_matched, &l_rab->recnum)) )
+		{
+		l_rab->pos	= l_rab->len;
+		l_rab->eof	= 1;
 		}
 
 	for ( ;; )
@@ -1311,27 +1714,11 @@ unsigned	l_markmax = 0;
 				break;
 				}
 
-			/* The name of the file is announced before its first match only - never under /FORMAT=GREP */
-			if ( a_ctx->heading && !l_heading && (a_ctx->format != SEARCH$K_FMT_GREP) )
+			/* The name of the file is announced before its first match only */
+			if ( !l_heading )
 				{
 				l_heading	= 1;
-
-				/*
-				**  The time stands in a column of its own, so that a
-				**  run over several files reads as a listing; a
-				**  specification too long for the column pushes it
-				**  right rather than being cut to fit.  The time is a
-				**  quadword and goes to !%D BY VALUE, per STARLET
-				**  X.01-09.
-				*/
-				l_namlen	= (unsigned) strlen(a_fspec);
-
-				l_pad		= (l_namlen < SEARCH$K_HDRNAME)
-							? (SEARCH$K_HDRNAME - l_namlen) : 2;
-
-				$SRCHPUT(a_ctx->out, "\n!#**\n!AZ", SEARCH$K_HDRWIDTH, a_fspec);
-
-				$SRCHPUT(a_ctx->out, "!#* !%D\n\n", l_pad, l_tim);
+				s_srch$heading(a_ctx, a_fspec, l_tim);
 				}
 
 			/*

@@ -55,6 +55,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-18		 2-OCT-2026	RRL
+**		SEARCH$K_SPLITMIN, SEARCH$K_SPLITPIECE: a large mapped file is
+**		searched in pieces by several threads at once.
+**
 **	X01-17		 2-OCT-2026	RRL
 **		Several files are searched at once, /THREADS: the THREADS
 **		member of the context; an output context may gather into the
@@ -150,11 +154,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-17"
+#define	__IDENT__	"X01-18"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.17.0"
+#define	__REV__		"1.18.0"
 #endif
 
 #ifndef	__FAC__
@@ -266,6 +270,9 @@ enum	{
 #define	SEARCH$K_MAXTHREADS	64		/* Ceiling of /THREADS				*/
 #define	SEARCH$K_DEFTHREADS	16		/* Ceiling of the default, the processors	*/
 #define	SEARCH$K_INFLIGHT	8		/* Files queued or searched ahead, per thread	*/
+#define	SEARCH$K_SPLITMIN	(32 * 1024 * 1024)	/* A mapped file this large is searched in	*/
+						/* pieces by several threads at once		*/
+#define	SEARCH$K_SPLITPIECE	(8 * 1024 * 1024)	/* The smallest piece worth a thread of its own	*/
 
 #define	SEARCH$K_DEFWIN		1		/* /WINDOW given without a value		*/
 #define	SEARCH$K_DEFROWS	24		/* Height of the page, no terminal to ask	*/

@@ -39,7 +39,7 @@ it against the shell:
 | `/MODIFIED`, `/CREATED` | which time stamp the two above apply to |
 | `/RECURSIVE` | descend into the subdirectories -- the analogue of `[...]` |
 | `/FORMAT=option` | `VMS` (default): headings and records; `GREP`: `spec:number:record`, one line each, for a tool |
-| `/THREADS=n` | search n files at once (default: the processors, at most 16); the display is that of one thread, byte for byte |
+| `/THREADS=n` | search n files at once (default: the processors, at most 16), and a file of 32 MB or more in pieces; the display is that of one thread, byte for byte |
 | `/BINARY=option` | a binary file (a NUL in its first 32 KB): `NOTE` that it matches (default), `SKIP` it, or search it as `TEXT` |
 | `/HELP [topic]` | display the description -- the help library of the product |
 

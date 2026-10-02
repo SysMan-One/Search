@@ -23,7 +23,8 @@
 #
 #		 2-OCT-2026	RRL	X-12 : The checks of /THREADS: a tree of many
 #					files searched by 1 and by 8 threads is
-#					displayed byte for byte alike.
+#					displayed byte for byte alike, and so is
+#					a file of 40 MB searched in pieces.
 #
 #		 2-OCT-2026	RRL	X-11 : The checks of /FORMAT=GREP - the lines of
 #					GREP -n, the window and the parting "--"
@@ -550,6 +551,26 @@ fi
 if $SEARCH 'thr/*.txt' alpha /THREADS=0 > /dev/null 2>&1
 	then ko "/THREADS=0 is refused"
 	else ok "/THREADS=0 is refused"
+fi
+
+#
+#	A file of 40 MB is searched in pieces under /THREADS; numbered, in the
+#	form of GREP and plain, it displays what a single thread does
+#
+awk 'BEGIN { for (r = 1; r <= 1000000; r++) print (r % 997) ? "plain padding record number " r : "the alpha and the beta of record " r }' > thr/big.txt
+
+L_SAME=1
+
+for L_Q in "/NUMBERS" "/FORMAT=GREP" "/NOHEADING" "/MATCH=AND /NUMBERS" ; do
+	$SEARCH thr/big.txt alpha,beta $L_Q /THREADS=1 > thr1.out 2>&1
+	$SEARCH thr/big.txt alpha,beta $L_Q /THREADS=8 > thr8.out 2>&1
+
+	[ -s thr1.out ] && cmp -s thr1.out thr8.out || L_SAME=0
+done
+
+if [ $L_SAME = 1 ]
+	then ok "a file of 40 MB searched in pieces displays what one thread does"
+	else ko "a file of 40 MB searched in pieces displays what one thread does"
 fi
 
 rm -rf thr thr1.out thr8.out

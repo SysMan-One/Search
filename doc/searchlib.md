@@ -415,6 +415,14 @@ them: the display, the numbers and the totals of /STATISTICS are
 those of a single thread, byte for byte. Without the qualifier as
 many threads are taken as there are processors, at most 16.
 
+A single large file -- 32 MB or more -- is cut into pieces at the
+ends of its records, and the pieces are searched by several threads
+at once and displayed in their order; where the records are
+numbered, the records of every piece are counted first. This is
+done under /MATCH=OR and AND without /WINDOW, and not for a binary
+file; the threads of all the files cut at once never exceed
+/THREADS.
+
 /THREADS=1 searches every file in the main thread, one after the
 other, and so does a run under /LOG, which reports every file in
 the order of the walk as it is searched, or under /PAGE, whose
