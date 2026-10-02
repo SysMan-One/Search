@@ -27,6 +27,9 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 2-OCT-2026	RRL	X-04 : /FORMAT added to the list of the
+#					qualifiers a topic is looked for.
+#
 #		 2-OCT-2026	RRL	X-03 : /BINARY added to the list of the
 #					qualifiers a topic is looked for.
 #		 1-AUG-2026	RRL	X-02 : /PAGE and /HIGHLIGHT added to the
@@ -82,7 +85,7 @@ ask ()
 MISSING=
 for Q in /EXACT /MATCH /WINDOW /PAGE /HIGHLIGHT /NUMBERS /HEADING \
 	 /OUTPUT /LOG /STATISTICS /EXCLUDE /SINCE /BEFORE /MODIFIED \
-	 /CREATED /RECURSIVE /BINARY /HELP
+	 /CREATED /RECURSIVE /BINARY /FORMAT /HELP
 do
 	if ! ask "$HLB" search "$Q" | grep -q "^ *$Q$"
 		then MISSING="$MISSING $Q"

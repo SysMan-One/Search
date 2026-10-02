@@ -38,6 +38,7 @@ it against the shell:
 | `/SINCE=time`, `/BEFORE=time` | take the files not older than / older than |
 | `/MODIFIED`, `/CREATED` | which time stamp the two above apply to |
 | `/RECURSIVE` | descend into the subdirectories -- the analogue of `[...]` |
+| `/FORMAT=option` | `VMS` (default): headings and records; `GREP`: `spec:number:record`, one line each, for a tool |
 | `/BINARY=option` | a binary file (a NUL in its first 32 KB): `NOTE` that it matches (default), `SKIP` it, or search it as `TEXT` |
 | `/HELP [topic]` | display the description -- the help library of the product |
 
@@ -142,10 +143,11 @@ the condition in the OpenVMS format, out of the catalogue this product
 registers with `__util$inimsg()`.  A build made for debugging names the
 module, the routine and the line as well.
 
-**Completion.**  The image exits `EXIT_SUCCESS` when at least one record
-matched and `EXIT_FAILURE` when nothing did or the command could not be
-carried out -- so a run may be tested the way `grep` is.  Nothing
-matched at all is reported by `%SEARCH-W-NOMATCHES`.
+**Completion.**  The image exits with the codes of `grep`: 0 when at least
+one record matched, 1 when nothing did, 2 when an error was signalled (a
+file that could not be opened or read, a command that could not be
+carried out), whatever else has matched.  Nothing matched at all is
+reported by `%SEARCH-W-NOMATCHES`.
 
 ## Build
 

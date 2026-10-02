@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHUTL"
-#define	__IDENT__	"X01-07"
-#define	__REV__		"1.7.0"
+#define	__IDENT__	"X01-08"
+#define	__REV__		"1.8.0"
 
 /*
 **++
@@ -31,6 +31,13 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-08		 2-OCT-2026	RRL
+**		SRCH$NOTE and SRCH$ERRORS: every condition signalled by
+**		$SRCHMSG passes SRCH$NOTE, which counts those of severity E
+**		and F, so that the completion code can tell an error (2) from
+**		a run that found nothing (1).  The count is atomic, ready for a
+**		search run by several threads.
 **
 **	X01-07		14-AUG-2026	RRL
 **		SEARCH$_SEARCHING and SEARCH$_SELECTING in the catalogue.
@@ -227,6 +234,58 @@ int	srch$inimsg	(void)
 	__util$setlogfd(STDERR_FILENO);
 
 	return	(int) __util$inimsg(&s_msgdsc);
+}
+
+
+/*
+**  The number of the conditions of severity E and F signalled so far.
+*/
+static	int	s_errors;
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Note a condition that has just been signalled by $SRCHMSG: one of
+**	severity E or F is counted.  The completion code of the image is
+**	decided by the count - an error is an error whether or not
+**	something has also matched, as with GREP.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_sts		The condition value, as $PUTMSG_FAO has returned it
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	S_ERRORS, advanced atomically.
+**
+**  RETURN VALUE:
+**	A_STS, unchanged, so that $SRCHMSG still yields the condition.
+**--
+*/
+int	srch$note	(
+		int	a_sts
+			)
+{
+	if ( ((a_sts & 7) == STS$K_ERROR) || ((a_sts & 7) == STS$K_FATAL) )
+		__atomic_add_fetch(&s_errors, 1, __ATOMIC_RELAXED);
+
+	return	a_sts;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	The number of the errors noted by SRCH$NOTE so far.
+**
+**  RETURN VALUE:
+**	The count, zero when nothing has gone wrong.
+**--
+*/
+int	srch$errors	(void)
+{
+	return	__atomic_load_n(&s_errors, __ATOMIC_RELAXED);
 }
 
 

@@ -21,6 +21,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 2-OCT-2026	RRL	X-11 : The checks of /FORMAT=GREP - the lines of
+#					GREP -n, the window and the parting "--"
+#					- and of the completion codes 0, 1, 2.
+#
 #		 2-OCT-2026	RRL	X-10 : The checks of /BINARY: a binary file
 #					is noted, skipped or searched as text;
 #					a record far past the old limit of 8192
@@ -467,6 +471,49 @@ if $SEARCH long1.txt needle 2>&1 >/dev/null | grep -q 'LONGREC'
 fi
 
 rm -f long1.txt long2.txt
+
+#
+#	/FORMAT=GREP writes the lines of GREP -n: spec:number:record, the window
+#	parted by hyphens, two runs by "--"
+#
+printf 'one alpha\ntwo\nthree\nfour alpha\nfive\nsix\nseven\neight alpha\n' > fmt.txt
+
+if [ "`$SEARCH fmt.txt alpha /FORMAT=GREP | head -1`" = "fmt.txt:1:one alpha" ]
+	then ok "/FORMAT=GREP writes spec:number:record"
+	else ko "/FORMAT=GREP writes spec:number:record"
+fi
+
+printf 'fmt.txt:1:one alpha\nfmt.txt-2-two\nfmt.txt-3-three\nfmt.txt:4:four alpha\nfmt.txt-5-five\n--\nfmt.txt-7-seven\nfmt.txt:8:eight alpha\n' > fmt.want
+
+if $SEARCH fmt.txt alpha /FORMAT=GREP /WINDOW=1 | cmp -s - fmt.want
+	then ok "/FORMAT=GREP /WINDOW writes what GREP -n -C1 does"
+	else ko "/FORMAT=GREP /WINDOW writes what GREP -n -C1 does"
+fi
+
+#
+#	The completion codes of GREP: 0 a match, 1 none, 2 an error
+#
+$SEARCH fmt.txt alpha > /dev/null 2>&1;		L_RC0=$?
+$SEARCH fmt.txt zzz > /dev/null 2>&1;		L_RC1=$?
+$SEARCH fmt.txt alpha /FORMAT=XML > /dev/null 2>&1;	L_RC2=$?
+
+if [ "$L_RC0$L_RC1$L_RC2" = "012" ]
+	then ok "the completion codes are 0, 1 and 2"
+	else ko "the completion codes are 0, 1 and 2 ($L_RC0$L_RC1$L_RC2)"
+fi
+
+chmod 000 fmt.want 2>/dev/null
+
+if [ "`id -u`" != "0" ] ; then
+	$SEARCH fmt.txt,fmt.want alpha > /dev/null 2>&1
+
+	if [ $? = 2 ]
+		then ok "an unreadable file is an error even when something matched"
+		else ko "an unreadable file is an error even when something matched"
+	fi
+fi
+
+rm -f fmt.txt fmt.want
 
 echo "%SEARCH-I-SMOKE, $CHECK check(s), $FAILED failure(s)"
 

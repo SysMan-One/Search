@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHMAT"
-#define	__IDENT__	"X01-12"
-#define	__REV__		"1.12.0"
+#define	__IDENT__	"X01-13"
+#define	__REV__		"1.13.0"
 
 /*
 **++
@@ -43,6 +43,13 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-13		 2-OCT-2026	RRL
+**		/FORMAT=GREP: a record is displayed as spec:number:record, a
+**		record of the window as spec-number-record, two runs are parted
+**		by "--" and a binary file says "Binary file spec matches" - the
+**		lines GREP -n writes, for a tool to read.  No heading is put
+**		out in that form.
 **
 **	X01-12		 2-OCT-2026	RRL
 **		A record is delivered whole however long it is: the mapped
@@ -120,6 +127,7 @@
 
 #define	_GNU_SOURCE	1			/* MEMMEM, an extension of the GNU CRTL	*/
 
+#include	<stdio.h>
 #include	<stdlib.h>
 #include	<string.h>
 #include	<errno.h>
@@ -840,7 +848,10 @@ unsigned	l_cnt = 0;
 **  FUNCTIONAL DESCRIPTION:
 **
 **	Display one record: the number of it when /NUMBERS is in force, the
-**	record itself, a line terminator.
+**	record itself, a line terminator.  Under /FORMAT=GREP the record is
+**	led instead by the specification of the file and its number, parted
+**	by a colon for a record that matched and by a hyphen for one of the
+**	window, as GREP -n writes them.
 **
 **	When /HIGHLIGHT is in force the runs of the record that belong to a
 **	search string are wrapped into the escape sequence of the style and
@@ -851,6 +862,8 @@ unsigned	l_cnt = 0;
 **  FORMAL PARAMETERS:
 **
 **	a_ctx		The search context
+**	a_fspec		The specification of the file, ASCIZ
+**	a_sep		':' for a record that matched, '-' for one of the window
 **	a_recnum	Number of the record in the file
 **	a_reclen	Length of the record
 **	a_rec		The record itself
@@ -869,6 +882,8 @@ unsigned	l_cnt = 0;
 */
 static	int	s_srch$putrec	(
 		SEARCH$CTX *	a_ctx,
+	const	char *		a_fspec,
+		char		a_sep,
 		uint64_t	a_recnum,
 		unsigned	a_reclen,
 	const	char *		a_rec,
@@ -879,7 +894,19 @@ const char *	l_seq;
 unsigned	l_run;
 int		l_status;
 
-	if ( a_ctx->numbers )
+	if ( a_ctx->format == SEARCH$K_FMT_GREP )
+		{
+		char	l_pfx [SEARCH$K_SZ_PATH + 32];
+		int	l_len = snprintf(l_pfx, sizeof(l_pfx), "%s%c%llu%c", a_fspec, a_sep,
+					(unsigned long long) a_recnum, a_sep);
+
+		if ( l_len >= (int) sizeof(l_pfx) )
+			l_len	= (int) sizeof(l_pfx) - 1;
+
+		if ( !(1 & (l_status = srch$put_raw(a_ctx->out, (unsigned) l_len, l_pfx))) )
+			return	l_status;
+		}
+	else if ( a_ctx->numbers )
 		{
 		l_status	= $SRCHPUT(a_ctx->out, "!#UQ  ", SEARCH$K_NUMWIDTH, a_recnum);
 
@@ -1277,13 +1304,15 @@ unsigned	l_markmax = 0;
 			*/
 			if ( l_binary )
 				{
-				$SRCHPUT(a_ctx->out, "%SEARCH-I-BINMATCH, binary file !AZ matches\n", a_fspec);
+				if ( a_ctx->format == SEARCH$K_FMT_GREP )
+					$SRCHPUT(a_ctx->out, "Binary file !AZ matches\n", a_fspec);
+				else	$SRCHPUT(a_ctx->out, "%SEARCH-I-BINMATCH, binary file !AZ matches\n", a_fspec);
 
 				break;
 				}
 
-			/* The name of the file is announced before its first match only */
-			if ( a_ctx->heading && !l_heading )
+			/* The name of the file is announced before its first match only - never under /FORMAT=GREP */
+			if ( a_ctx->heading && !l_heading && (a_ctx->format != SEARCH$K_FMT_GREP) )
 				{
 				l_heading	= 1;
 
@@ -1314,10 +1343,14 @@ unsigned	l_markmax = 0;
 			if ( l_first <= l_lastput )
 				l_first	= l_lastput + 1;
 
-			/* A gap between two runs of records is marked by an empty line */
+			/* A gap between two runs of records is marked by an empty line, by "--" under /FORMAT=GREP */
 			if ( (a_ctx->winbef || a_ctx->winaft) && l_lastput && (l_first < l_rab->recnum)
 				&& (l_first > (l_lastput + 1)) )
-				srch$put_raw(a_ctx->out, 1, "\n");
+				{
+				if ( a_ctx->format == SEARCH$K_FMT_GREP )
+					srch$put_raw(a_ctx->out, 3, "--\n");
+				else	srch$put_raw(a_ctx->out, 1, "\n");
+				}
 
 			for ( unsigned i = 0; i < l_ringcnt; i++ )
 				{
@@ -1327,14 +1360,14 @@ unsigned	l_markmax = 0;
 				if ( (l_ent->recnum < l_first) || (l_ent->recnum >= l_rab->recnum) )
 					continue;
 
-				s_srch$putrec(a_ctx, l_ent->recnum, l_ent->len, l_ent->buf,
+				s_srch$putrec(a_ctx, a_fspec, '-', l_ent->recnum, l_ent->len, l_ent->buf,
 					(l_mark && (1 & s_srch$markbuf(&l_mark, &l_markmax, l_ent->len))) ? l_mark : NULL);
 				l_lastput	= l_ent->recnum;
 				}
 
 			if ( l_rab->recnum > l_lastput )
 				{
-				s_srch$putrec(a_ctx, l_rab->recnum, l_reclen, l_rec,
+				s_srch$putrec(a_ctx, a_fspec, ':', l_rab->recnum, l_reclen, l_rec,
 					(l_mark && (1 & s_srch$markbuf(&l_mark, &l_markmax, l_reclen))) ? l_mark : NULL);
 				l_lastput	= l_rab->recnum;
 				}
@@ -1344,7 +1377,7 @@ unsigned	l_markmax = 0;
 		else if ( l_pending )
 			{
 			/* A record of the window carries no match, so it is never marked */
-			s_srch$putrec(a_ctx, l_rab->recnum, l_reclen, l_rec, NULL);
+			s_srch$putrec(a_ctx, a_fspec, '-', l_rab->recnum, l_reclen, l_rec, NULL);
 
 			l_lastput	= l_rab->recnum;
 			l_pending--;

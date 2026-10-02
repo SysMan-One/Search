@@ -201,6 +201,27 @@ Descend into the subdirectories \- the analogue of the
 of an OpenVMS directory specification.  A symbolic link is never followed,
 neither to a file nor to a directory.
 .TP
+.BI /BINARY= option
+What is done with a binary file, one that carries a NUL among its first
+32 KB:
+.B NOTE
+(the default) says in one line that it matches,
+.B SKIP
+leaves it alone,
+.B TEXT
+searches and displays it as any other file.
+.TP
+.BI /FORMAT= option
+.B VMS
+(the default) displays headings and records;
+.B GREP
+displays every record as
+.IR spec : number : record ,
+one line each, as
+.B grep \-n
+does, for a tool to read: no heading, every record numbered, a record of
+the window parted by hyphens, two runs parted by a line \(lq\-\-\(rq.
+.TP
 .BI /HELP " [topic]"
 Display the description of the utility -- the help library of the
 product -- and stop.  The words that follow name a topic within it:
@@ -261,9 +282,13 @@ the search, and is therefore announced by
 At least one record matched.
 .TP
 .B 1
-Nothing matched, or the command could not be carried out.  Nothing matched
-at all is reported by
+Nothing matched, and nothing went wrong.  Nothing matched at all is reported
+by
 .BR %SEARCH\-W\-NOMATCHES .
+.TP
+.B 2
+An error was signalled \- a file that could not be opened or read, a
+command that could not be carried out \- whatever else has matched.
 .SH EXAMPLES
 .TP
 .B search '*.txt' error

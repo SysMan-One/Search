@@ -55,6 +55,13 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-16		 2-OCT-2026	RRL
+**		SEARCH$K_FMT_* and the FORMAT member of the context, /FORMAT;
+**		SEARCH$K_EXIT_*, the completion codes of GREP (0 a match, 1
+**		none, 2 an error); $SRCHMSG goes through SRCH$NOTE, which
+**		counts the errors signalled so that the completion code can
+**		tell an error from a run that found nothing.
+**
 **	X01-15		 2-OCT-2026	RRL
 **		A record is no longer cut at 8192 bytes: SEARCH$K_SZ_REC gives
 **		way to SEARCH$K_MAXREC, the ceiling of the read-ahead area
@@ -134,11 +141,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-15"
+#define	__IDENT__	"X01-16"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.15.0"
+#define	__REV__		"1.16.0"
 #endif
 
 #ifndef	__FAC__
@@ -300,6 +307,27 @@ enum	{
 	};
 
 /*
+**  The form of the display, /FORMAT.  Ordered - hence an enumeration; the
+**  keyword table lives in SEARCH.C.
+*/
+enum	{
+	SEARCH$K_FMT_VMS	= 0,		/* Headings and numbered records, the default	*/
+	SEARCH$K_FMT_GREP,			/* spec:number:record, one line each, for tools	*/
+
+	SEARCH$K_FMT_MAX			/* End-Of-List					*/
+	};
+
+/*
+**  The completion codes of the image, those of GREP: a script tells a run
+**  that found something from one that found nothing from one that failed.
+*/
+enum	{
+	SEARCH$K_EXIT_MATCH	= 0,		/* At least one record matched			*/
+	SEARCH$K_EXIT_NOMATCH,			/* Nothing matched, nothing went wrong		*/
+	SEARCH$K_EXIT_ERROR			/* An error was signalled, matched or not	*/
+	};
+
+/*
 **  Which time stamp of a file /SINCE and /BEFORE are applied to.
 */
 enum	{
@@ -393,6 +421,7 @@ typedef	struct	srch_ctx_t
 	int		hlstyle;		/* SEARCH$K_HL_*, the style of the marking	*/
 	int		exact;			/* /EXACT: the case is significant		*/
 	int		binary;			/* SEARCH$K_BIN_*, /BINARY			*/
+	int		format;			/* SEARCH$K_FMT_*, /FORMAT			*/
 	int		numbers;		/* /NUMBERS: prefix the record number		*/
 	int		heading;		/* /HEADING: announce every file		*/
 	int		log;			/* /LOG: report every file searched		*/
@@ -458,7 +487,7 @@ typedef	struct	srch_rab_t
 #error	"UTILITY_ROUTINES.H of UTILS V.01-24 or later is required: $PUTMSG_FAO is missing"
 #endif
 
-#define	$SRCHMSG(a_sts, ...)	((int) $PUTMSG_FAO((a_sts), ##__VA_ARGS__))
+#define	$SRCHMSG(a_sts, ...)	srch$note((int) $PUTMSG_FAO((a_sts), ##__VA_ARGS__))
 #define	$SRCHPUT(out, fmt, ...)	srch$put((out), (fmt), FAO$_NARG(__VA_ARGS__) FAO$_EACH(__VA_ARGS__))
 
 /*
@@ -466,6 +495,8 @@ typedef	struct	srch_rab_t
 **  and time services shared by the whole facility.
 */
 int	srch$inimsg	(void);
+int	srch$note	(int a_sts);
+int	srch$errors	(void);
 int	srch$out_init	(SEARCH$OUT *a_out, int a_fd);
 int	srch$out_page	(SEARCH$OUT *a_out, int a_page);
 int	srch$out_final	(SEARCH$OUT *a_out);

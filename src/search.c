@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-26"
-#define	__REV__		"1.26.0"
+#define	__IDENT__	"X01-27"
+#define	__REV__		"1.27.0"
 
 /*
 **++
@@ -46,6 +46,8 @@
 **					analogue of the [...] of OpenVMS
 **		    /BINARY=option	a binary file: NOTE that it matches
 **					(default), SKIP it, or search it as TEXT
+**		    /FORMAT=option	VMS (default), or GREP: spec:number:record
+**					one line a record, for a tool to read
 **		    /HELP		display the syntax
 **
 **		The first word that is not a qualifier is the list of the
@@ -109,6 +111,13 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-27		 2-OCT-2026	RRL
+**		/FORMAT=VMS|GREP: GREP displays spec:number:record, one line a
+**		record, for a tool to read, and implies /NUMBERS; no heading.
+**		The completion codes are those of GREP: 0 a match, 1 none, 2
+**		an error - signalled anywhere in the run, matched or not, or a
+**		command that could not be parsed.
 **
 **	X01-26		 2-OCT-2026	RRL
 **		A record is no longer cut at 8192 bytes - see SRCHMAT X01-12;
@@ -251,6 +260,7 @@ enum	{
 	SEARCH$K_QUAL_CREATED,
 	SEARCH$K_QUAL_RECURSIVE,
 	SEARCH$K_QUAL_BINARY,
+	SEARCH$K_QUAL_FORMAT,
 	SEARCH$K_QUAL_HELP,
 
 	SEARCH$K_QUAL_MAX
@@ -294,6 +304,16 @@ static	CLI_KEYWORD	s_binkwd [] = {
 	};
 
 /*
+**  The keywords of /FORMAT.  The value of a keyword is the SEARCH$K_FMT_*
+**  constant it stands for.
+*/
+static	CLI_KEYWORD	s_fmtkwd [] = {
+	{ .name = {$ASCINI("VMS")},	.val = SEARCH$K_FMT_VMS },
+	{ .name = {$ASCINI("GREP")},	.val = SEARCH$K_FMT_GREP },
+	{ .name = { .len = 0 } }
+	};
+
+/*
 **  The qualifier table of the utility.  An empty name closes the table.
 */
 static	CLI_PQDESC	s_quals [] = {
@@ -315,6 +335,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("CREATED")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("RECURSIVE")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL,	.flag = CLI$M_NEGATABLE },
 	{ .name = {$ASCINI("BINARY")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_binkwd },
+	{ .name = {$ASCINI("FORMAT")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_fmtkwd },
 	{ .name = {$ASCINI("HELP")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = { .len = 0 } }
 	};
@@ -354,6 +375,8 @@ static	const char	s_usage [] = {
 	"    /RECURSIVE          descend into the subdirectories\n"
 	"    /BINARY=option      a binary file: NOTE (default) that it matches,\n"
 	"                        SKIP it, or search it as TEXT\n"
+	"    /FORMAT=option      VMS (default): headings and records; GREP:\n"
+	"                        spec:number:record, one line each, for tools\n"
 	"    /HELP               display this text\n"
 	"\n"
 	"A search string is a plain substring; a file specification is expanded\n"
@@ -739,6 +762,21 @@ int		l_wincnt = 0;
 			}
 		}
 
+	/* ... /FORMAT, whose GREP form numbers every record ... */
+	if ( 1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_FORMAT], NULL) )
+		{
+		if ( 1 & __cli$get_value(a_clictx, &s_quals[SEARCH$K_QUAL_FORMAT], &l_val) )
+			{
+			__util$asc2str(&l_val, l_str);
+
+			if ( !(1 & s_search$cvtkwd(s_fmtkwd, l_str, &a_ctx->format)) )
+				return	$SRCHMSG(SEARCH$_IVQUAL, l_str, "FORMAT");
+			}
+
+		if ( a_ctx->format == SEARCH$K_FMT_GREP )
+			a_ctx->numbers	= 1;
+		}
+
 	/* ... /MATCH ... */
 	if ( 1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_MATCH], NULL) )
 		{
@@ -1060,9 +1098,10 @@ static	int	s_search$stats	(
 **	/OUTPUT.
 **
 **  RETURN VALUE:
-**	EXIT_SUCCESS	- at least one record matched;
-**	EXIT_FAILURE	- nothing matched, or the command could not be
-**			  carried out.
+**	SEARCH$K_EXIT_MATCH	- at least one record matched, no error;
+**	SEARCH$K_EXIT_NOMATCH	- nothing matched, no error;
+**	SEARCH$K_EXIT_ERROR	- an error was signalled, whatever matched,
+**				  or the command could not be carried out.
 **--
 */
 int	main	(
@@ -1202,11 +1241,11 @@ int		l_status, l_fd = STDOUT_FILENO;
 			srch$flush(&l_out);
 			}
 
-		return	(l_usage && (1 & l_status || (l_status == STS$K_WARN))) ? EXIT_SUCCESS : EXIT_FAILURE;
+		return	(l_usage && (1 & l_status || (l_status == STS$K_WARN))) ? SEARCH$K_EXIT_MATCH : SEARCH$K_EXIT_ERROR;
 		}
 
 	if ( !(1 & __cli$parse(s_verbs, CLI$M_OPSIGNAL, l_argc, l_argv, (void **) &l_clictx)) )
-		return	EXIT_FAILURE;
+		return	SEARCH$K_EXIT_ERROR;
 
 	/*
 	**  Every lookup from here on is an optional one - a qualifier that is
@@ -1223,7 +1262,7 @@ int		l_status, l_fd = STDOUT_FILENO;
 		{
 		__cli$cleanup(l_clictx);
 
-		return	EXIT_FAILURE;
+		return	SEARCH$K_EXIT_ERROR;
 		}
 
 	/* The first word is the list of the file specifications ... */
@@ -1232,7 +1271,7 @@ int		l_status, l_fd = STDOUT_FILENO;
 		$SRCHMSG(SEARCH$_NOSTRING);
 		__cli$cleanup(l_clictx);
 
-		return	EXIT_FAILURE;
+		return	SEARCH$K_EXIT_ERROR;
 		}
 
 	/* ... every word after it is a list of the search strings */
@@ -1255,7 +1294,7 @@ int		l_status, l_fd = STDOUT_FILENO;
 		$SRCHMSG(SEARCH$_NOSTRING);
 		__cli$cleanup(l_clictx);
 
-		return	EXIT_FAILURE;
+		return	SEARCH$K_EXIT_ERROR;
 		}
 
 	/* /OUTPUT is created only after the command has proved to be a sound one */
@@ -1266,7 +1305,7 @@ int		l_status, l_fd = STDOUT_FILENO;
 			$SRCHMSG(SEARCH$_OPENOUT, l_outspec, errno, strerror(errno));
 			__cli$cleanup(l_clictx);
 
-			return	EXIT_FAILURE;
+			return	SEARCH$K_EXIT_ERROR;
 			}
 		}
 
@@ -1339,5 +1378,9 @@ int		l_status, l_fd = STDOUT_FILENO;
 
 	__cli$cleanup(l_clictx);
 
-	return	l_ctx.stat.recsmatched ? EXIT_SUCCESS : EXIT_FAILURE;
+	/* As GREP: an error decides, whatever else has matched */
+	if ( srch$errors() )
+		return	SEARCH$K_EXIT_ERROR;
+
+	return	l_ctx.stat.recsmatched ? SEARCH$K_EXIT_MATCH : SEARCH$K_EXIT_NOMATCH;
 }

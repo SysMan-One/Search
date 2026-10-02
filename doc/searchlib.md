@@ -53,9 +53,11 @@ like one can still be asked for:
 $ search -- notes.txt /EXACT
 ```
 
-The image exits with a success status when at least one record
-matched, and with a failure status when nothing did or the command
-could not be carried out -- so a run may be tested the way grep is.
+The image exits with the codes of grep: 0 when at least one record
+matched, 1 when nothing did, 2 when an error was signalled -- a file
+that could not be opened or read, a command that could not be
+carried out -- whatever else has matched. A run may be tested the
+way grep is.
 
 ## Parameters
 
@@ -379,6 +381,27 @@ and reported by one line in place of the records:
 ```
 
 The completion status counts such a file as a match.
+
+## /FORMAT -- the form of the display
+
+```
+/FORMAT=VMS      headings and records, for a reader (default)
+/FORMAT=GREP     spec:number:record, one line a record, for a tool
+```
+
+GREP writes every record on a line of its own, led by the
+specification of the file and the number of the record, in the
+form GREP -n uses, so that an editor or a script can read it:
+
+```
+$ search '*.c' rte_mbuf /RECURSIVE /FORMAT=GREP
+src/rx.c:118:    struct rte_mbuf *m = NULL;
+```
+
+No heading is put out, and the records are numbered whatever
+/NUMBERS says. A record of /WINDOW is parted from its number by a
+hyphen instead of a colon, two runs of records by a line "--", and
+a binary file is reported as "Binary file spec matches".
 
 ## /HELP -- display the description
 
