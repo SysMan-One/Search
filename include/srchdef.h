@@ -55,6 +55,12 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-15		 2-OCT-2026	RRL
+**		A record is no longer cut at 8192 bytes: SEARCH$K_SZ_REC gives
+**		way to SEARCH$K_MAXREC, the ceiling of the read-ahead area
+**		grown for a long record, and the RAB says whether its area has
+**		been grown (GROWN).
+**
 **	X01-14		 2-OCT-2026	RRL
 **		SEARCH$K_BIN_* and the BINARY member of the context: what is
 **		done with a binary file, /BINARY.
@@ -128,11 +134,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-14"
+#define	__IDENT__	"X01-15"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.14.0"
+#define	__REV__		"1.15.0"
 #endif
 
 #ifndef	__FAC__
@@ -218,7 +224,10 @@ enum	{
 **  Sizes and limits of the subsystem.
 */
 #define	SEARCH$K_SZ_PATH	1024		/* Maximum length of a file specification	*/
-#define	SEARCH$K_SZ_REC		8192		/* Maximum length of a record, longer is cut	*/
+#define	SEARCH$K_MAXREC		(64 * 1024 * 1024)	/* Longest record of a file that is read,	*/
+						/* not mapped: the read-ahead area grows to	*/
+						/* hold a record up to this length, a longer	*/
+						/* one is cut; a mapped file has no limit	*/
 #define	SEARCH$K_MAPMIN	262144		/* Below this a file is read, not mapped	*/
 #define	SEARCH$K_SZ_BLK		32768		/* Region the prefilter looks at in one go	*/
 #define	SEARCH$K_SZ_BUF		32768		/* Size of the read-ahead buffer of a file	*/
@@ -407,6 +416,7 @@ typedef	struct	srch_rab_t
 	int		skip;			/* The tail of an over-long record is dropped	*/
 
 	int		mapped;			/* BUF is a mapping of the file, not OWN	*/
+	int		grown;			/* BUF is a heap area grown past OWN		*/
 	size_t		mapsz;			/* Size of the mapping, bytes			*/
 
 	unsigned	len,			/* Bytes present in the buffer			*/

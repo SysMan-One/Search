@@ -466,10 +466,13 @@ within the last hour".
 A record is a line. The last line of a file that ends without a
 line terminator is a record none the less.
 
-A record longer than 8192 bytes is truncated to that length. The
-truncation affects the display and the search alike -- a string
-past the limit is not found -- which is why it is announced with
-%SEARCH-W-LONGREC, once per file.
+A record is searched and displayed whole, however long it is: a
+large file is mapped into memory as it stands, and a small one is
+read through an area that grows for a long record. Only a record
+longer than 64 MB in a file that cannot be mapped -- a pipe, a
+device -- is cut to that length. The cut affects the display and
+the search alike -- a string past it is not found -- which is why
+it is announced with %SEARCH-W-LONGREC, once per file.
 
 The message names the record where the records have been counted,
 which they are only when /NUMBERS, /LOG or /STATISTICS asks for a

@@ -126,9 +126,10 @@ survived the shell and whether the defaults were the ones assumed.
 Linux has to a creation time.
 
 **Records** are lines.  The last line of a file that ends without a
-terminator is a record none the less.  A record longer than 8192 bytes
-is truncated to that length, which affects the display *and* the search,
-and is therefore announced by `%SEARCH-W-LONGREC`.
+terminator is a record none the less.  A record is searched and displayed
+whole however long it is; only a record longer than 64 MB in a file that
+cannot be mapped (a pipe, a device) is cut, which affects the display
+*and* the search, and is therefore announced by `%SEARCH-W-LONGREC`.
 
 **Diagnostics** are signalled by the message subsystem of the STARLET
 library, on the standard error stream -- never on the standard output,

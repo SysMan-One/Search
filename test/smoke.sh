@@ -22,7 +22,10 @@
 #	MODIFICATION HISTORY:
 #
 #		 2-OCT-2026	RRL	X-10 : The checks of /BINARY: a binary file
-#					is noted, skipped or searched as text.
+#					is noted, skipped or searched as text;
+#					a record far past the old limit of 8192
+#					bytes is searched and displayed whole,
+#					read or mapped, highlighted or not.
 #		21-AUG-2026	RRL	X-09 : The checks of the two spellings of a
 #					single-character wildcard.
 #
@@ -435,6 +438,35 @@ if [ "`$SEARCH alpha.txt alpha /NOHEADING | wc -l`" = "3" ]
 fi
 
 rm -f bin.dat
+
+#
+#	A long record is searched and displayed whole: 100 KB in a file small
+#	enough to be read, 1 MB in one large enough to be mapped
+#
+awk 'BEGIN { printf "first\n"; for (i = 0; i < 10000; i++) printf "xxxxxxxxxx"; print "NEEDLE tail"; print "last" }' > long1.txt
+awk 'BEGIN { for (i = 0; i < 40000; i++) printf "yyyyyyyyyy"; print ""; for (i = 0; i < 100000; i++) printf "xxxxxxxxxx"; print "NEEDLE tail" }' > long2.txt
+
+if [ "`$SEARCH long1.txt needle /NOHEADING 2>&1 | wc -c`" = "100012" ]
+	then ok "a record of 100 KB is found and displayed whole"
+	else ko "a record of 100 KB is found and displayed whole"
+fi
+
+if [ "`$SEARCH long2.txt needle /NOHEADING 2>&1 | wc -c`" = "1000012" ]
+	then ok "a record of 1 MB in a mapped file is found and displayed whole"
+	else ko "a record of 1 MB in a mapped file is found and displayed whole"
+fi
+
+if [ "`$SEARCH long1.txt needle /NOHEADING /HIGHLIGHT 2>&1 | grep -c 'NEEDLE'`" = "1" ]
+	then ok "a long record is highlighted"
+	else ko "a long record is highlighted"
+fi
+
+if $SEARCH long1.txt needle 2>&1 >/dev/null | grep -q 'LONGREC'
+	then ko "a long record is not reported as truncated"
+	else ok "a long record is not reported as truncated"
+fi
+
+rm -f long1.txt long2.txt
 
 echo "%SEARCH-I-SMOKE, $CHECK check(s), $FAILED failure(s)"
 

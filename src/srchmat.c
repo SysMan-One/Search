@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHMAT"
-#define	__IDENT__	"X01-11"
-#define	__REV__		"1.11.0"
+#define	__IDENT__	"X01-12"
+#define	__REV__		"1.12.0"
 
 /*
 **++
@@ -22,10 +22,13 @@
 **		matched exactly as it has been typed.
 **
 **		A record is a line.  The last line of a file that ends
-**		without a line terminator is a record none the less, and
-**		a record longer than SEARCH$K_SZ_REC is truncated to that
-**		length with SEARCH$_LONGREC - the truncation affects the
-**		display AND the search, which is why it is announced.
+**		without a line terminator is a record none the less.  A
+**		record is delivered whole however long it is: a mapped file
+**		is in memory as it stands, and the read-ahead area of a file
+**		that is read grows for a long record up to SEARCH$K_MAXREC.
+**		Only a record longer than that is cut, with SEARCH$_LONGREC
+**		- the cut affects the display AND the search, which is why
+**		it is announced.
 **
 **		/WINDOW asks for a number of records around a match to be
 **		displayed as well.  The records that precede the match are
@@ -40,6 +43,15 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-12		 2-OCT-2026	RRL
+**		A record is delivered whole however long it is: the mapped
+**		file has no limit at all, the read-ahead area of a file that is
+**		read doubles for a long record up to SEARCH$K_MAXREC (64 MB),
+**		and the marking of /HIGHLIGHT grows with it (S_SRCH$MARKBUF).
+**		Only past that ceiling is a record cut, and SEARCH$_LONGREC now
+**		names the length it was cut to.  A string past the old limit
+**		of 8192 bytes - an executable is one long record - was missed.
 **
 **	X01-11		 2-OCT-2026	RRL
 **		A binary file - a NUL among its first SEARCH$K_SZ_BLK bytes,
@@ -567,8 +579,9 @@ unsigned	l_found = 0;
 **
 **	The buffer is refilled as it empties, a partial record being moved
 **	to its front first, so that a record never spans two refills.  A
-**	record that would not fit into the whole buffer is delivered
-**	truncated to SEARCH$K_SZ_REC and the rest of it is dropped up to
+**	record that would not fit into the whole buffer makes the buffer
+**	grow, doubling, up to SEARCH$K_MAXREC; one longer still is
+**	delivered cut to the buffer and the rest of it is dropped up to
 **	the next terminator.
 **
 **  FORMAL PARAMETERS:
@@ -648,13 +661,7 @@ unsigned	l_rest, l_len;
 			a_rab->pos	+= l_len + 1;
 			a_rab->recnum++;
 
-			if ( l_len > SEARCH$K_SZ_REC )
-				{
-				*a_reclen	= SEARCH$K_SZ_REC;
-
-				return	STS$K_INFO;
-				}
-
+			/* A record present whole is delivered whole, however long it is */
 			*a_reclen	= l_len;
 
 			return	STS$K_SUCCESS;
@@ -674,13 +681,6 @@ unsigned	l_rest, l_len;
 			a_rab->pos	= a_rab->len;
 			a_rab->recnum++;
 
-			if ( l_rest > SEARCH$K_SZ_REC )
-				{
-				*a_reclen	= SEARCH$K_SZ_REC;
-
-				return	STS$K_INFO;
-				}
-
 			*a_reclen	= l_rest;
 
 			return	STS$K_SUCCESS;
@@ -696,13 +696,34 @@ unsigned	l_rest, l_len;
 
 		/*
 		**  A full buffer without a single terminator: the record is
-		**  longer than the whole read-ahead area.  Its head is
-		**  delivered and the rest of it is dropped by the branch above.
+		**  longer than the read-ahead area.  The area is doubled, up to
+		**  SEARCH$K_MAXREC, and the read goes on; only a record longer
+		**  than that - or one met when the heap refuses - is cut: its
+		**  head is delivered and the rest of it is dropped by the
+		**  branch above.
 		*/
 		if ( a_rab->len == a_rab->bufsz )
 			{
+			if ( a_rab->bufsz < SEARCH$K_MAXREC )
+				{
+				unsigned	l_newsz = (a_rab->bufsz > (SEARCH$K_MAXREC / 2)) ? SEARCH$K_MAXREC : (a_rab->bufsz * 2);
+				char *		l_new = a_rab->grown ? realloc(a_rab->buf, l_newsz) : malloc(l_newsz);
+
+				if ( l_new )
+					{
+					if ( !a_rab->grown )
+						memcpy(l_new, a_rab->buf, a_rab->len);
+
+					a_rab->buf	= l_new;
+					a_rab->bufsz	= l_newsz;
+					a_rab->grown	= 1;
+
+					continue;
+					}
+				}
+
 			*a_rec		= a_rab->buf;
-			*a_reclen	= SEARCH$K_SZ_REC;
+			*a_reclen	= a_rab->len;
 
 			a_rab->pos	= a_rab->len;
 			a_rab->skip	= 1;
@@ -833,7 +854,7 @@ unsigned	l_cnt = 0;
 **	a_recnum	Number of the record in the file
 **	a_reclen	Length of the record
 **	a_rec		The record itself
-**	a_mark		A scratch area of SEARCH$K_SZ_REC bytes, or NULL when
+**	a_mark		A scratch area of at least A_RECLEN bytes, or NULL when
 **			the record is not to be highlighted
 **
 **  IMPLICIT INPUTS/OUTPUTS:
@@ -899,6 +920,52 @@ int		l_status;
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
+**	Make the marking area of the highlighting hold a record of a given
+**	length.  The area only ever grows, to the longest record displayed
+**	from the file; a record is no longer cut at a fixed length, so the
+**	area cannot be of one.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_mark		The area, NULL before the first call; may be moved
+**	a_max		Its capacity, bytes
+**	a_len		The length of the record to be marked
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- the area holds A_LEN + 1 bytes;
+**	STS$K_ERROR	- the heap has refused, the area is left as it was:
+**			  the record is displayed unmarked rather than not
+**			  at all.
+**--
+*/
+static	int	s_srch$markbuf	(
+		char **		a_mark,
+		unsigned *	a_max,
+		unsigned	a_len
+			)
+{
+char *	l_new;
+
+	if ( *a_max > a_len )
+		return	STS$K_SUCCESS;
+
+	if ( !(l_new = realloc(*a_mark, (size_t) a_len + 1)) )
+		return	STS$K_ERROR;
+
+	*a_mark	= l_new;
+	*a_max	= a_len + 1;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
 **	Search one file and display every record that satisfies the match,
 **	together with the window of records asked for by /WINDOW.
 **
@@ -935,6 +1002,7 @@ const char *	l_cleanend = NULL;
 uint64_t	l_seen = 0;
 int		l_status, l_fd, l_heading = 0, l_longrec = 0;
 int		l_prefilt, l_needcnt, l_binary = 0;
+unsigned	l_markmax = 0;
 
 	/* The reader has answered Q at the pager - nothing more is to be displayed */
 	if ( a_ctx->out->quit )
@@ -955,13 +1023,17 @@ int		l_prefilt, l_needcnt, l_binary = 0;
 		return	$SRCHMSG(SEARCH$_NOMEM, sizeof(SEARCH$RAB), errno, strerror(errno));
 		}
 
-	/* The marking of the highlighting: one flag per byte of a record */
-	if ( a_ctx->hilite && !(l_mark = calloc(1, SEARCH$K_SZ_REC + 1)) )
+	/*
+	**  The marking of the highlighting: one flag per byte of a record.
+	**  It grows with the longest record displayed - see S_SRCH$MARKBUF -
+	**  and starts at the size of the read-ahead area.
+	*/
+	if ( a_ctx->hilite && !(1 & s_srch$markbuf(&l_mark, &l_markmax, SEARCH$K_SZ_BUF)) )
 		{
 		free(l_rab);
 		close(l_fd);
 
-		return	$SRCHMSG(SEARCH$_NOMEM, (SEARCH$K_SZ_REC + 1), errno, strerror(errno));
+		return	$SRCHMSG(SEARCH$_NOMEM, SEARCH$K_SZ_BUF, errno, strerror(errno));
 		}
 
 	if ( a_ctx->winbef && !(l_ring = calloc(a_ctx->winbef, sizeof(SEARCH$RING))) )
@@ -1102,7 +1174,7 @@ int		l_prefilt, l_needcnt, l_binary = 0;
 		**  a string is remembered as examined, so that the scan is not
 		**  repeated for every record of it.
 		**
-		**  A record too long for SEARCH$K_SZ_REC goes unreported within
+		**  A record too long for SEARCH$K_MAXREC goes unreported within
 		**  a clean region - and rightly so: SEARCH$_LONGREC warns that
 		**  the search may have missed something, and in a region that
 		**  carries none of the strings there is nothing to miss.
@@ -1187,8 +1259,8 @@ int		l_prefilt, l_needcnt, l_binary = 0;
 			**  counted none, and says so by naming no number.
 			*/
 			if ( l_needcnt || !l_prefilt )
-				$SRCHMSG(SEARCH$_LONGREC, a_fspec, l_rab->recnum, SEARCH$K_SZ_REC);
-			else	$SRCHMSG(SEARCH$_LONGRECU, a_fspec, SEARCH$K_SZ_REC);
+				$SRCHMSG(SEARCH$_LONGREC, a_fspec, l_rab->recnum, l_reclen);
+			else	$SRCHMSG(SEARCH$_LONGRECU, a_fspec, l_reclen);
 			}
 
 		a_ctx->stat.recsread++;
@@ -1255,13 +1327,15 @@ int		l_prefilt, l_needcnt, l_binary = 0;
 				if ( (l_ent->recnum < l_first) || (l_ent->recnum >= l_rab->recnum) )
 					continue;
 
-				s_srch$putrec(a_ctx, l_ent->recnum, l_ent->len, l_ent->buf, l_mark);
+				s_srch$putrec(a_ctx, l_ent->recnum, l_ent->len, l_ent->buf,
+					(l_mark && (1 & s_srch$markbuf(&l_mark, &l_markmax, l_ent->len))) ? l_mark : NULL);
 				l_lastput	= l_ent->recnum;
 				}
 
 			if ( l_rab->recnum > l_lastput )
 				{
-				s_srch$putrec(a_ctx, l_rab->recnum, l_reclen, l_rec, l_mark);
+				s_srch$putrec(a_ctx, l_rab->recnum, l_reclen, l_rec,
+					(l_mark && (1 & s_srch$markbuf(&l_mark, &l_markmax, l_reclen))) ? l_mark : NULL);
 				l_lastput	= l_rab->recnum;
 				}
 
@@ -1321,6 +1395,8 @@ int		l_prefilt, l_needcnt, l_binary = 0;
 
 	if ( l_rab->mapped )
 		munmap(l_rab->buf, l_rab->mapsz);
+	else if ( l_rab->grown )
+		free(l_rab->buf);
 
 	free(l_ring);
 	free(l_mark);

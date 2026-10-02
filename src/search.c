@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-25"
-#define	__REV__		"1.25.0"
+#define	__IDENT__	"X01-26"
+#define	__REV__		"1.26.0"
 
 /*
 **++
@@ -109,6 +109,10 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-26		 2-OCT-2026	RRL
+**		A record is no longer cut at 8192 bytes - see SRCHMAT X01-12;
+**		nothing in this module changed but the ident.
 **
 **	X01-25		 2-OCT-2026	RRL
 **		"доработай search": /BINARY=NOTE|SKIP|TEXT - what is done with

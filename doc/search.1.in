@@ -249,8 +249,9 @@ and
 .RE
 .SH RECORDS
 A record is a line.  The last line of a file that ends without a
-terminator is a record none the less.  A record longer than 8192 bytes is
-truncated to that length, which affects the display
+terminator is a record none the less.  A record is searched and displayed
+whole however long it is; only a record longer than 64 MB in a file that
+cannot be mapped (a pipe, a device) is cut, which affects the display
 .I and
 the search, and is therefore announced by
 .BR %SEARCH\-W\-LONGREC .
