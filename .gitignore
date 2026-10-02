@@ -1,0 +1,6 @@
+# build trees
+/build/
+/build-*/
+
+# CodeGraph index (local, rebuilt by the codegraph tool)
+/.codegraph/

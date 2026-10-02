@@ -1,0 +1,318 @@
+.\"+++
+.\"
+.\"	FACILITY:	SEARCH - OpenVMS-style record search utility for Linux
+.\"
+.\"	MODULE:		doc/search.1
+.\"
+.\"	ABSTRACT:	The manual page of the SEARCH utility.
+.\"
+.\"	AUTHOR:		StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+.\"
+.\"	CREATION DATE:	 1-AUG-2026
+.\"
+.\"	MODIFICATION HISTORY:
+.\"
+.\"		 1-AUG-2026	RRL	X-01 : Initial version.
+.\"
+.\"---
+.TH SEARCH 1 "4 August 2026" "SEARCH @SEARCH_IDENT@" "User Commands"
+.SH NAME
+search \- display the records of a set of files that carry given strings
+.SH SYNOPSIS
+.B search
+.I file-spec\fR[,...]
+.I search-string\fR[,...]
+.RI [ /qualifiers ]
+.SH DESCRIPTION
+.B search
+reads the records of every selected file and displays those that satisfy a
+boolean combination of the given search strings, after the DCL
+.B SEARCH
+command of OpenVMS.
+.PP
+A search string is a plain
+.B substring
+\- no wildcard, no regular expression, nothing to escape.  A file
+specification, in contrast,
+.B is
+expanded by the utility itself, so quote it against the shell to have it
+expanded here, which is what
+.B /EXCLUDE
+and
+.B /RECURSIVE
+need to be of any use.
+.PP
+The first word that is not a qualifier is the list of the file
+specifications; every word after it is a list of the search strings.  A
+list is separated by commas; an element carrying a comma of its own is to
+be enclosed in double quotes, or passed as a word of its own.
+.PP
+A qualifier may be abbreviated as long as the abbreviation is unambiguous,
+and may be spelled in the Unix long form:
+.B \-\-EXACT
+for
+.BR /EXACT .
+A single dash begins an ordinary value, so a file spelled
+.I \-notes.txt
+is asked for as it stands;
+.B \-h
+alone is the short alias of
+.BR /HELP .
+.PP
+A word beginning with a slash is taken for a qualifier only when it names
+one:
+.B /RECURSIVE
+does,
+.I /usr/src/*.c
+and
+.I /etc
+do not, since a slash begins an absolute file specification here as well.
+A word that names no qualifier is a parameter, so a misspelt qualifier
+becomes one instead of being refused; spelled in the long form,
+.BR \-\-NAME ,
+it is a qualifier beyond doubt and the misspelling is reported.  A lone
+.B \-\-
+ends the qualifiers, so that a file or a string spelled like one can be
+asked for.
+.SH QUALIFIERS
+.TP
+.B /EXACT
+The case of the letters is significant.  By default it is ignored; a byte
+above 0x7f is always compared as it stands, so a Cyrillic string is matched
+exactly as it has been typed either way.
+.TP
+.BI /MATCH= option
+How the search strings are combined within a record:
+.B OR
+(the default) \- at least one is present;
+.B AND
+\- every one is present;
+.B NAND
+\- at least one is absent;
+.B NOR
+\- none is present.
+.TP
+.BI /WINDOW [=( n , m )]
+Display
+.I n
+records before and
+.I m
+records after a match.  One value means that many on either side, no value
+means one on either side.  Overlapping windows produce one continuous run
+of records \- no record is displayed twice \- and a gap between two runs is
+marked by an empty line.
+.TP
+.B /[NO]PAGE
+Stop the display at the end of every page and wait.  An empty line
+displays the next page; an answer beginning with
+.B Q
+abandons the display, and the files still to be searched are not opened
+at all.
+.IP
+Paging is granted only when the output really is a terminal and an
+answer can be read from one -- from the standard input when that is a
+terminal, from
+.I /dev/tty
+otherwise -- so a redirected run never waits for a keystroke.  The
+height of the page is the one the terminal driver reports.  Off by
+default.
+.TP
+.BI /[NO]HIGHLIGHT [=style]
+Mark, within every displayed record, the runs that belong to a search
+string.  The style is
+.BR BOLD " (the default), " REVERSE ", " UNDERLINE ", " RED ", " GREEN
+or
+.BR YELLOW .
+.IP
+Overlapping occurrences are marked as one run.  A record displayed as
+part of the window of
+.B /WINDOW
+carries no match of its own and is never marked.
+.IP
+The marking uses the escape sequences of ECMA-48 and is therefore
+granted by default only when the output is a terminal;
+.B /HIGHLIGHT
+given outright overrides that,
+.B /NOHIGHLIGHT
+suppresses the marking whatever the output is.
+.TP
+.B /[NO]NUMBERS
+Prefix, or do not prefix, the number of the record.  Off by default.
+.TP
+.B /[NO]HEADING
+Announce, or do not announce, every file before its first matching
+record.  The heading is a rule of asterisks, the specification of the
+file and its time stamp -- the very stamp the selection works on, so
+that a run with
+.B /SINCE
+displays the time it has compared against.  On by default.
+.TP
+.BI /OUTPUT= filespec
+Write the result to a file instead of the standard output.  The
+diagnostics keep going to the standard error stream.
+.TP
+.B /[NO]LOG
+Report every file searched, with the number of records read and matched,
+and account, before the first file is opened, for what the command has
+been made to mean:
+.IP
+.RS
+.nf
+%SEARCH\-I\-SEARCHING, for "alpha", "beta" combined by AND, ...
+%SEARCH\-I\-SELECTING, in *.c, /RECURSIVE, /EXCLUDE=(build/%*)
+.fi
+.RE
+.TP
+.B /[NO]STATISTICS
+Report the totals at the end of the run.
+.TP
+.BI /EXCLUDE= (pattern,...)
+Drop the files matching a pattern.  A pattern that carries a slash is
+matched against the whole specification of a file, one that does not \-
+against its name alone.  An excluded directory is not descended into at
+all.
+.TP
+.BI /SINCE= time "\fR, \fB/BEFORE=" time
+Take the files that are not older than, or that are older than, the given
+time.  See
+.B TIME
+below.  A delta and a keyword say nothing about the date they land on, so
+.B /LOG
+reports what the value resolved to:
+.IP
+.RS
+.nf
+%SEARCH\-I\-SELTIME, /SINCE=0\-1:00 is  1\-AUG\-2026 13:52:20.00
+.fi
+.RE
+.TP
+.B /MODIFIED\fR, \fB/CREATED
+Which time stamp
+.B /SINCE
+and
+.B /BEFORE
+apply to: the time of the last modification (the default), or the time of
+the last change of the inode \- the closest analogue Linux has to a
+creation time.  The two cannot be given together.
+.TP
+.B /RECURSIVE
+Descend into the subdirectories \- the analogue of the
+.B [...]
+of an OpenVMS directory specification.  A symbolic link is never followed,
+neither to a file nor to a directory.
+.TP
+.BI /HELP " [topic]"
+Display the description of the utility -- the help library of the
+product -- and stop.  The words that follow name a topic within it:
+.B "search /HELP window"
+is the description of
+.BR /WINDOW ,
+a word that names no subtopic being tried once more with a slash in
+front of it.
+.IP
+The library is looked for where
+.B SEARCH$HELPLIB
+says, then beside the image, then where the product was configured to
+install it; failing all of them, and in a build made without the HELP
+product at hand, a summary of the qualifiers built into the image
+answers instead.
+.SH WILDCARDS
+A file specification is expanded by the utility:
+.B *
+matches any run of characters,
+.B %
+and
+.B ?
+match exactly one.  The wildcards apply to the name within a directory:
+the part of the specification up to the last slash is a directory and is
+not expanded \- walk a tree with
+.B /RECURSIVE
+instead.  A specification carrying no wildcard is taken literally: a
+directory stands for everything in it, a file stands for itself.
+.SH TIME
+A time value is read the way
+.B UTIL$BINTIM
+of the STARLET module reads it, plus the keywords
+.BR TODAY ,
+.BR YESTERDAY ,
+.B TOMORROW
+and
+.BR NOW :
+.PP
+.RS
+.nf
+/SINCE=1\-AUG\-2026        an absolute date
+/SINCE=14:30             today at half past two
+/SINCE=0\-1:00            a delta: within the last hour
+/SINCE=TODAY             since midnight
+.fi
+.RE
+.SH RECORDS
+A record is a line.  The last line of a file that ends without a
+terminator is a record none the less.  A record longer than 8192 bytes is
+truncated to that length, which affects the display
+.I and
+the search, and is therefore announced by
+.BR %SEARCH\-W\-LONGREC .
+.SH EXIT STATUS
+.TP
+.B 0
+At least one record matched.
+.TP
+.B 1
+Nothing matched, or the command could not be carried out.  Nothing matched
+at all is reported by
+.BR %SEARCH\-W\-NOMATCHES .
+.SH EXAMPLES
+.TP
+.B search '*.txt' error
+Every record of every .TXT file of the current directory that carries the
+string, the case being ignored.
+.TP
+.B search '*.c' alpha,beta /MATCH=AND /NUMBERS
+The records that carry both strings, prefixed by their numbers.
+.TP
+.B search '*' STS$K_ /RECURSIVE /EXCLUDE=(build/%*,*.o)
+The whole tree below the current directory, one directory and every object
+file left out.
+.TP
+.B search 'src/*.c' TODO "/WINDOW=(1,2)" /OUTPUT=todo.lis
+Every match with one record before and two after it, written to a file.
+.TP
+.B search '*.c' alpha /RECURSIVE /PAGE /HIGHLIGHT=REVERSE
+The whole tree, a page at a time, every occurrence in reverse video.
+.TP
+.B search \-\- notes.txt /EXACT
+The string /EXACT in the file, rather than the qualifier.
+.SH DIAGNOSTICS
+The diagnostics are signalled by the message subsystem of the STARLET
+library, on the standard error stream.  A record carries the date, the
+time and the thread, and then the condition in the OpenVMS format:
+.PP
+.RS
+.nf
+14\-08\-2026 12:25:29.279    841 %SEARCH\-W\-NOFILES, no file matches *.lis
+.fi
+.RE
+.PP
+A build made for debugging names the module, the routine and the line as
+well.
+.SH SEE ALSO
+.BR grep (1),
+.BR vhelp (1)
+.PP
+The fuller description of the utility is a help library of the HELP
+subsystem, installed as
+.IR <prefix>/share/help/search.hlb :
+.PP
+.RS
+.nf
+$ vhelp search
+$ vhelp \-\- search /window
+.fi
+.RE
+.PP
+The DCL SEARCH command of OpenVMS, of which this utility is the portable
+analogue.
+.SH AUTHOR
+StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
