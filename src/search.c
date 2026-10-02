@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-29"
-#define	__REV__		"1.29.0"
+#define	__IDENT__	"X01-30"
+#define	__REV__		"1.30.0"
 
 /*
 **++
@@ -113,6 +113,12 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-30		 2-OCT-2026	RRL
+**		"делай 1 и 2": the case is ignored in any script the locale
+**		knows, not in ASCII alone - LC_CTYPE is the user's if it is a
+**		UTF-8 locale, C.UTF-8 otherwise; the faster matcher and the
+**		exact count of the records are SRCHMAT X01-15.
 **
 **	X01-29		 2-OCT-2026	RRL
 **		Under /THREADS a single file of 32 MB or more is searched in
@@ -249,6 +255,8 @@
 #include	<errno.h>
 #include	<fcntl.h>
 #include	<unistd.h>
+#include	<locale.h>
+#include	<langinfo.h>
 
 #include	"srchdef.h"
 
@@ -1161,6 +1169,18 @@ int		l_status, l_fd = STDOUT_FILENO;
 	srch$inimsg();
 
 	srch$msec(&l_beg);
+
+	/*
+	**  The case of a letter outside ASCII is told by the locale: the
+	**  user's own if it is a UTF-8 one, C.UTF-8 otherwise - the text a
+	**  search runs over is UTF-8 here whatever LANG says, and the C
+	**  locale knows the case of no letter but the Latin ones.  Only the
+	**  classification of the characters is taken, nothing else of it.
+	*/
+	setlocale(LC_CTYPE, "");
+
+	if ( strcmp(nl_langinfo(CODESET), "UTF-8") )
+		setlocale(LC_CTYPE, "C.UTF-8");
 
 	/*
 	**  The defaults of the display: the name of a file is announced, the

@@ -78,9 +78,10 @@ see the description of the command for how the two are told apart.
 The strings to be looked for, separated by commas. A string is
 matched as a substring, at any position of a record.
 
-Unless /EXACT is given the case of the ASCII letters is ignored. A
-byte above 0x7f is always compared as it stands, so a Cyrillic
-string is matched exactly as it was typed either way.
+Unless /EXACT is given the case of the letters is ignored, in any
+script the locale knows: "поиск" finds Поиск and ПОИСК as "alpha"
+finds Alpha. The text is taken as UTF-8; the locale is the user's if
+it is a UTF-8 one, C.UTF-8 otherwise.
 
 How several strings are combined is decided by /MATCH.
 
@@ -89,7 +90,8 @@ How several strings are combined is decided by /MATCH.
 Compares the letters as they stand, so that ALPHA, Alpha and alpha
 are three different strings.
 
-By default the case of the ASCII letters is ignored.
+By default the case of the letters is ignored, Latin, Cyrillic or
+any other the locale knows.
 
 ## /MATCH -- combine several search strings
 

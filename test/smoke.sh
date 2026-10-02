@@ -21,6 +21,11 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 2-OCT-2026	RRL	X-13 : The case is ignored in Cyrillic too, the
+#					highlighting marks it; a record after a
+#					terminator followed by 0x0B is numbered
+#					right (it was counted twice).
+#
 #		 2-OCT-2026	RRL	X-12 : The checks of /THREADS: a tree of many
 #					files searched by 1 and by 8 threads is
 #					displayed byte for byte alike, and so is
@@ -574,6 +579,41 @@ if [ $L_SAME = 1 ]
 fi
 
 rm -rf thr thr1.out thr8.out
+
+#
+#	The case is ignored in any script, not in ASCII alone; /EXACT is exact
+#
+printf 'Поиск в начале\nтут ПОИСК крупно\nа тут ничего\nпОиСк смешанно\nОшибка_42 и ошибка_42\n' > ru.txt
+
+if [ "`LANG=C LC_ALL=C $SEARCH ru.txt поиск /NOHEADING | wc -l`" = "3" ]
+	then ok "the case of a Cyrillic letter is ignored"
+	else ko "the case of a Cyrillic letter is ignored"
+fi
+
+if [ "`$SEARCH ru.txt поиск /EXACT /NOHEADING 2>/dev/null | wc -l`" = "0" ]
+	then ok "/EXACT makes the case of a Cyrillic letter significant"
+	else ko "/EXACT makes the case of a Cyrillic letter significant"
+fi
+
+if [ "`$SEARCH ru.txt ОШИБКА_42 /NOHEADING /HIGHLIGHT | grep -o \"$ESC\[1m\" | wc -l`" = "2" ]
+	then ok "both spellings of a Cyrillic string are highlighted"
+	else ko "both spellings of a Cyrillic string are highlighted"
+fi
+
+rm -f ru.txt
+
+#
+#	A terminator followed by 0x0B in a region the prefilter steps over was
+#	counted twice, and every number after it was off
+#
+awk 'BEGIN { for (i = 0; i < 100000; i++) printf "a\n\013b\n"; print "target here" }' > vt.txt
+
+if [ "`$SEARCH vt.txt target /NUMBERS /NOHEADING /THREADS=1 | awk '{ print $1 }'`" = "200001" ]
+	then ok "a record after a terminator and 0x0B is numbered right"
+	else ko "a record after a terminator and 0x0B is numbered right"
+fi
+
+rm -f vt.txt
 
 echo "%SEARCH-I-SMOKE, $CHECK check(s), $FAILED failure(s)"
 

@@ -77,9 +77,9 @@ asked for.
 .SH QUALIFIERS
 .TP
 .B /EXACT
-The case of the letters is significant.  By default it is ignored; a byte
-above 0x7f is always compared as it stands, so a Cyrillic string is matched
-exactly as it has been typed either way.
+The case of the letters is significant.  By default it is ignored, in any
+script the locale knows \- Cyrillic as well as Latin; the text is taken as
+UTF-8, under the user's locale if it is a UTF-8 one, C.UTF-8 otherwise.
 .TP
 .BI /MATCH= option
 How the search strings are combined within a record:

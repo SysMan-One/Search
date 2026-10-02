@@ -24,7 +24,7 @@ it against the shell:
 
 | Qualifier | Meaning |
 |---|---|
-| `/EXACT` | the case of the letters is significant; ignored by default |
+| `/EXACT` | the case of the letters is significant; ignored by default, in any script the locale knows (Cyrillic too) |
 | `/MATCH=option` | how the strings are combined: `OR` (default), `AND`, `NAND`, `NOR` |
 | `/WINDOW[=(n,m)]` | display `n` records before and `m` after a match; one value -- both sides; no value -- one on either side |
 | `/[NO]PAGE` | stop at the end of a page and wait; a terminal only, off by default |

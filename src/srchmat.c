@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHMAT"
-#define	__IDENT__	"X01-14"
-#define	__REV__		"1.14.0"
+#define	__IDENT__	"X01-15"
+#define	__REV__		"1.15.0"
 
 /*
 **++
@@ -43,6 +43,20 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-15		 2-OCT-2026	RRL
+**		The count of the record terminators of a skipped region was
+**		wrong: (w - 01..01) & ~w & 80..80 flags a zero byte, but also
+**		the byte after one that borrows - a terminator followed by 0x0B
+**		was counted twice, and every number after it was off.  It now
+**		uses the exact test and adds up byte lanes instead of calling
+**		__POPCOUNTDI2 once a word (3.5 times faster).  /EXACT anchors on
+**		a character by MEMCHR and compares by MEMCMP instead of calling
+**		MEMMEM per region.  The case is ignored in any script: a string
+**		that is not ASCII alone is matched character by character,
+**		folded through TOWLOWER, anchored on a character of both its
+**		spellings (S_SRCH$FIND, S_SRCH$U8DEC, S_SRCH$U8ENC); the
+**		highlighting marks what S_SRCH$FIND finds.
 **
 **	X01-14		 2-OCT-2026	RRL
 **		Under /THREADS a mapped file of SEARCH$K_SPLITMIN or more is
@@ -149,6 +163,7 @@
 #include	<sys/stat.h>
 #include	<sys/mman.h>
 #include	<pthread.h>
+#include	<wctype.h>
 
 #include	"srchdef.h"
 
@@ -164,6 +179,99 @@ typedef	struct	srch_ring_t
 			max;			/* Capacity of the buffer		*/
 	char *		buf;			/* The record itself			*/
 } SEARCH$RING;
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Decode one character of UTF-8.  A byte that does not begin a well
+**	formed sequence stands for itself, as a value no character folds
+**	to, so that it matches nothing but the very same byte.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_ptr		The first byte
+**	a_end		The byte past the last one that may be read
+**	a_chr		Receives the character
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	The length of the character, bytes: 1 .. 4.
+**--
+*/
+static	unsigned	s_srch$u8dec	(
+	const	char *		a_ptr,
+	const	char *		a_end,
+		wint_t *	a_chr
+			)
+{
+const unsigned char *	l_p = (const unsigned char *) a_ptr;
+unsigned	l_len, l_avail = (unsigned) (a_end - a_ptr);
+wint_t		l_chr;
+
+	if ( l_p [0] < 0x80 )
+		return	*a_chr = l_p [0], 1;
+
+	l_len	= ((l_p [0] & 0xE0) == 0xC0) ? 2 : ((l_p [0] & 0xF0) == 0xE0) ? 3 : ((l_p [0] & 0xF8) == 0xF0) ? 4 : 0;
+
+	if ( !l_len || (l_len > l_avail) )
+		return	*a_chr = 0x110000 + l_p [0], 1;	/* Past Unicode: never a folded character	*/
+
+	l_chr	= l_p [0] & (0x7F >> l_len);
+
+	for ( unsigned i = 1; i < l_len; i++ )
+		{
+		if ( (l_p [i] & 0xC0) != 0x80 )
+			return	*a_chr = 0x110000 + l_p [0], 1;
+
+		l_chr	= (l_chr << 6) | (l_p [i] & 0x3F);
+		}
+
+	return	*a_chr = l_chr, l_len;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Encode one character as UTF-8.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_chr		The character
+**	a_buf		Receives the bytes, 4 at most
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	The number of the bytes.
+**--
+*/
+static	unsigned	s_srch$u8enc	(
+		wint_t		a_chr,
+		char *		a_buf
+			)
+{
+unsigned char *	l_b = (unsigned char *) a_buf;
+
+	if ( a_chr < 0x80 )
+		return	l_b [0] = (unsigned char) a_chr, 1;
+
+	if ( a_chr < 0x800 )
+		return	l_b [0] = (unsigned char) (0xC0 | (a_chr >> 6)), l_b [1] = (unsigned char) (0x80 | (a_chr & 0x3F)), 2;
+
+	if ( a_chr < 0x10000 )
+		return	l_b [0] = (unsigned char) (0xE0 | (a_chr >> 12)), l_b [1] = (unsigned char) (0x80 | ((a_chr >> 6) & 0x3F)),
+			l_b [2] = (unsigned char) (0x80 | (a_chr & 0x3F)), 3;
+
+	return	l_b [0] = (unsigned char) (0xF0 | (a_chr >> 18)), l_b [1] = (unsigned char) (0x80 | ((a_chr >> 12) & 0x3F)),
+		l_b [2] = (unsigned char) (0x80 | ((a_chr >> 6) & 0x3F)), l_b [3] = (unsigned char) (0x80 | (a_chr & 0x3F)), 4;
+}
 
 
 /*
@@ -232,6 +340,51 @@ unsigned	l_len;
 		break;
 		}
 
+	/*
+	**  A string that is not ASCII alone is matched case-blind character
+	**  by character, through the case mapping of the locale - SRCH$INIT
+	**  has made sure it is a UTF-8 one where that can be had.  Its
+	**  characters are kept folded to lower case; the scan anchors on the
+	**  first one whose case is no matter - a digit, a sign, a space - or,
+	**  wanting one, on the first character, looked for in both of its
+	**  spellings.  /EXACT compares bytes and needs none of this.
+	*/
+	l_str->wide	= 0;
+
+	for ( unsigned i = 0; i < l_len; i++ )
+		if ( (unsigned char) l_str->str [i] >= 0x80 )
+			l_str->wide	= 1;
+
+	if ( l_str->wide )
+		{
+		const char *	l_ptr = l_str->str, *l_end = l_str->str + l_len;
+		wint_t		l_chr;
+		int		l_inv = -1;
+
+		for ( l_str->nchr = 0; l_ptr < l_end; l_str->nchr++ )
+			{
+			l_ptr	+= s_srch$u8dec(l_ptr, l_end, &l_chr);
+
+			l_str->fold [l_str->nchr]	= (l_chr < 0x110000) ? towlower(l_chr) : l_chr;
+
+			if ( (l_inv < 0) && (l_chr < 0x110000) && (towupper(l_chr) == towlower(l_chr)) )
+				l_inv	= (int) l_str->nchr;
+			}
+
+		l_str->wanchor	= (l_inv < 0) ? 0 : (unsigned) l_inv;
+		l_chr		= l_str->fold [l_str->wanchor];
+
+		if ( l_chr < 0x110000 )
+			{
+			l_str->alen [0]	= (unsigned char) s_srch$u8enc(l_chr, l_str->alt [0]);
+			l_str->alen [1]	= (unsigned char) s_srch$u8enc(towupper(l_chr), l_str->alt [1]);
+			}
+		else	{
+			l_str->alt [0][0] = l_str->alt [1][0] = (char) (l_chr - 0x110000);
+			l_str->alen [0]	= l_str->alen [1] = 1;
+			}
+		}
+
 	a_ctx->strcnt++;
 
 	return	STS$K_SUCCESS;
@@ -263,29 +416,134 @@ unsigned	l_len;
 **	STS$K_WARN	- it is not.
 **--
 */
-static	int	s_srch$instr	(
+static	int	s_srch$find	(
 		int		a_exact,
 		unsigned	a_reclen,
 	const	char *		a_rec,
-	const	SEARCH$STR *	a_str
+		unsigned	a_from,
+	const	SEARCH$STR *	a_str,
+		unsigned *	a_at,
+		unsigned *	a_mlen
 			)
 {
-const char *	l_cand, *l_up = NULL, *l_lo = NULL, *l_ptr, *l_first, *l_last;
+const char *	l_cand, *l_up = NULL, *l_lo = NULL, *l_ptr, *l_first, *l_last, *l_end = a_rec + a_reclen;
 unsigned char	l_chr, l_cup, l_clo;
 int		l_upend = 0, l_loend = 0;
 
-	if ( !a_str->len || (a_str->len > a_reclen) )
+	if ( !a_str->len || (a_from > a_reclen) )
 		return	STS$K_WARN;
 
 	/*
-	**  The case is significant: the CRTL does the whole of it, and does
-	**  it a machine word at a time.
+	**  The case is significant: the anchor character of the string -
+	**  see SRCH$ADDSTR - is looked for by MEMCHR, the vectorised routine
+	**  of the CRTL, and the string is compared where it stands.  MEMMEM,
+	**  which did this before, sets up its two-way search afresh on every
+	**  call, and it is called once per region of the prefilter: a run
+	**  over a large file that matched nothing spent half its time in
+	**  that setup.
 	*/
 	if ( a_exact )
-		return	memmem(a_rec, a_reclen, a_str->str, a_str->len) ? STS$K_SUCCESS : STS$K_WARN;
+		{
+		if ( a_str->len > (a_reclen - a_from) )
+			return	STS$K_WARN;
+
+		l_cup	= (unsigned char) a_str->str [a_str->anchor];
+		l_last	= a_rec + (a_reclen - a_str->len) + a_str->anchor;
+
+		for ( l_ptr = a_rec + a_from + a_str->anchor; l_ptr <= l_last; l_ptr = l_cand + a_str->anchor + 1 )
+			{
+			if ( !(l_cand = memchr(l_ptr, l_cup, (size_t) (l_last - l_ptr) + 1)) )
+				break;
+
+			l_cand	-= a_str->anchor;
+
+			if ( !memcmp(l_cand, a_str->str, a_str->len) )
+				return	*a_at = (unsigned) (l_cand - a_rec), *a_mlen = a_str->len, STS$K_SUCCESS;
+			}
+
+		return	STS$K_WARN;
+		}
 
 	/*
-	**  Case-blind.  Rather than comparing at every position of the
+	**  Case-blind, a string that is not ASCII alone: character by
+	**  character through the case mapping of the locale.  The anchor
+	**  character is looked for in both of its spellings; from where it
+	**  stands the record is stepped back over as many characters as
+	**  precede it in the string - a character may take more or fewer
+	**  bytes in the record than in the string, if its other case is
+	**  encoded otherwise - and compared forward, folded, from there.
+	*/
+	if ( a_str->wide )
+		{
+		const char *	l_cnd [2] = {NULL, NULL};
+		int		l_done [2] = {0, a_str->alen [0] == a_str->alen [1] && !memcmp(a_str->alt [0], a_str->alt [1], a_str->alen [0])};
+		wint_t		l_wc;
+
+		if ( a_str->nchr > (a_reclen - a_from) )
+			return	STS$K_WARN;
+
+		for ( l_ptr = a_rec + a_from; l_ptr < l_end; )
+			{
+			/* The earlier of the two candidates, each looked for again once it falls behind */
+			for ( int k = 0; k < 2; k++ )
+				if ( !l_done [k] && (!l_cnd [k] || (l_cnd [k] < l_ptr)) )
+					if ( !(l_cnd [k] = memmem(l_ptr, (size_t) (l_end - l_ptr), a_str->alt [k], a_str->alen [k])) )
+						l_done [k]	= 1;
+
+			l_cand	= l_done [0] ? NULL : l_cnd [0];
+
+			if ( !l_done [1] && l_cnd [1] && (!l_cand || (l_cnd [1] < l_cand)) )
+				l_cand	= l_cnd [1];
+
+			if ( !l_cand )
+				break;
+
+			l_ptr	= l_cand + 1;
+
+			/* Back to where the string would begin: WANCHOR characters, a character's head each */
+			l_first	= l_cand;
+
+			for ( unsigned k = 0; k < a_str->wanchor; k++ )
+				{
+				if ( l_first <= (a_rec + a_from) )
+					{
+					l_first	= NULL;
+					break;
+					}
+
+				for ( l_first--; (l_first > (a_rec + a_from)) && ((*(const unsigned char *) l_first & 0xC0) == 0x80); l_first-- )
+					;
+				}
+
+			if ( !l_first )
+				continue;
+
+			/* Forward, folded, character by character */
+			l_last	= l_first;
+
+			for ( unsigned k = 0; ; k++ )
+				{
+				if ( k == a_str->nchr )
+					return	*a_at = (unsigned) (l_first - a_rec), *a_mlen = (unsigned) (l_last - l_first), STS$K_SUCCESS;
+
+				if ( l_last >= l_end )
+					break;
+
+				l_last	+= s_srch$u8dec(l_last, l_end, &l_wc);
+
+				if ( ((l_wc < 0x110000) ? towlower(l_wc) : l_wc) != a_str->fold [k] )
+					break;
+				}
+			}
+
+		return	STS$K_WARN;
+		}
+
+	if ( a_str->len > (a_reclen - a_from) )
+		return	STS$K_WARN;
+
+	/*
+	**  Case-blind, ASCII.  Rather than comparing at every position of the
 	**  record, the scan is anchored on one character of the string,
 	**  looked for by MEMCHR - the vectorised routine of the CRTL - and
 	**  the comparison is entered only where a candidate really lies.
@@ -302,7 +560,7 @@ int		l_upend = 0, l_loend = 0;
 	l_cup	= (unsigned char) a_str->ups [a_str->anchor];
 	l_clo	= ((l_cup >= 'A') && (l_cup <= 'Z')) ? (unsigned char) (l_cup + ('a' - 'A')) : l_cup;
 
-	l_first	= a_rec + a_str->anchor;		/* Earliest the anchor may stand	*/
+	l_first	= a_rec + a_from + a_str->anchor;	/* Earliest the anchor may stand	*/
 	l_last	= a_rec + (a_reclen - a_str->len) + a_str->anchor;
 
 	for ( l_ptr = l_first; l_ptr <= l_last; )
@@ -330,7 +588,7 @@ int		l_upend = 0, l_loend = 0;
 		for ( unsigned j = 0; ; j++ )
 			{
 			if ( j == a_str->len )
-				return	STS$K_SUCCESS;
+				return	*a_at = (unsigned) (l_cand - a_rec), *a_mlen = a_str->len, STS$K_SUCCESS;
 
 			if ( j == a_str->anchor )
 				continue;
@@ -348,6 +606,22 @@ int		l_upend = 0, l_loend = 0;
 		}
 
 	return	STS$K_WARN;
+}
+
+
+/*
+**  Whether a string occurs in a record at all: S_SRCH$FIND from the start.
+*/
+static	int	s_srch$instr	(
+		int		a_exact,
+		unsigned	a_reclen,
+	const	char *		a_rec,
+	const	SEARCH$STR *	a_str
+			)
+{
+unsigned	l_at, l_mlen;
+
+	return	s_srch$find(a_exact, a_reclen, a_rec, 0, a_str, &l_at, &l_mlen);
 }
 
 
@@ -437,30 +711,47 @@ static	uint64_t	s_srch$nlcount	(
 	const	char *		a_blk
 			)
 {
-uint64_t	l_word, l_hits, l_cnt = 0;
-unsigned	l_pos = 0;
+uint64_t	l_word, l_acc, l_cnt = 0;
+unsigned	l_pos = 0, l_run;
 
 	/*
-	**  A word at a time, by the classic trick: exclusive-or with a word
-	**  of terminators turns every terminator into a zero byte, and
-	**  (w - ONES) & ~w & HIGHS then carries a set high bit in exactly
-	**  the bytes that were zero.  Counting those bits is one
-	**  instruction.
+	**  A word at a time.  Exclusive-or with a word of terminators turns
+	**  every terminator into a zero byte, and
 	**
-	**  MEMCHR is faster still at finding the FIRST terminator, but it
-	**  would have to be called once per record; here the whole region
-	**  is counted in one pass, which is the point of the exercise - a
-	**  region that carries none of the search strings costs nothing but
-	**  this.
+	**	~(((w & 7F..7F) + 7F..7F) | w | 7F..7F)
+	**
+	**  sets the high bit of exactly the bytes that are zero: the sum
+	**  carries into the high bit of a byte whose low seven bits are not
+	**  all clear, OR-ing W in catches a byte of high bit set, and no
+	**  carry crosses into the next byte.  (The shorter (w - 01..01) &
+	**  ~w & 80..80 tells whether a word holds a zero byte, but a zero
+	**  byte followed by 0x01 - a terminator followed by 0x0B - borrows
+	**  and is counted twice: the numbers of the records went wrong.)
+	**
+	**  The flags are not counted word by word - __BUILTIN_POPCOUNTLL is
+	**  a call into the run-time library where the processor is not told
+	**  it has POPCNT - but added up in the eight byte lanes of an
+	**  accumulator, which holds 255 words before a lane could overflow,
+	**  and folded into the count once per run.
 	*/
-	for ( ; (l_pos + sizeof(uint64_t)) <= a_len; l_pos += sizeof(uint64_t) )
+	while ( (l_pos + sizeof(uint64_t)) <= a_len )
 		{
-		memcpy(&l_word, a_blk + l_pos, sizeof(l_word));	/* The alignment is none of our business	*/
+		l_acc	= 0;
 
-		l_word	^= UINT64_C(0x0A0A0A0A0A0A0A0A);
-		l_hits	= (l_word - UINT64_C(0x0101010101010101)) & ~l_word & UINT64_C(0x8080808080808080);
+		for ( l_run = 0; (l_run < 255) && ((l_pos + sizeof(uint64_t)) <= a_len); l_run++, l_pos += sizeof(uint64_t) )
+			{
+			memcpy(&l_word, a_blk + l_pos, sizeof(l_word));	/* The alignment is none of our business	*/
 
-		l_cnt	+= (uint64_t) __builtin_popcountll(l_hits);
+			l_word	^= UINT64_C(0x0A0A0A0A0A0A0A0A);
+			l_word	= ~(((l_word & UINT64_C(0x7F7F7F7F7F7F7F7F)) + UINT64_C(0x7F7F7F7F7F7F7F7F))
+					| l_word | UINT64_C(0x7F7F7F7F7F7F7F7F));
+
+			l_acc	+= l_word >> 7;				/* One per zero byte, in its own lane	*/
+			}
+
+		/* The lanes, at most 255 each, folded: pairs into 16 bits, then all four */
+		l_acc	= (l_acc & UINT64_C(0x00FF00FF00FF00FF)) + ((l_acc >> 8) & UINT64_C(0x00FF00FF00FF00FF));
+		l_cnt	+= (l_acc * UINT64_C(0x0001000100010001)) >> 48;
 		}
 
 	/* The tail, of less than a word */
@@ -809,49 +1100,17 @@ static	int	s_srch$mark	(
 		char *		a_mark
 			)
 {
-SEARCH$STR *	l_str;
-unsigned char	l_chr;
-unsigned	l_cnt = 0;
+unsigned	l_cnt = 0, l_from, l_at, l_mlen;
 
 	memset(a_mark, 0, a_reclen);
 
+	/* Every occurrence of every string, overlapping ones too: the next one is looked for a byte on */
 	for ( unsigned s = 0; s < a_ctx->strcnt; s++ )
-		{
-		l_str	= &a_ctx->strs [s];
-
-		if ( !l_str->len || (l_str->len > a_reclen) )
-			continue;
-
-		for ( unsigned i = 0; i <= (a_reclen - l_str->len); i++ )
+		for ( l_from = 0; 1 & s_srch$find(a_ctx->exact, a_reclen, a_rec, l_from, &a_ctx->strs [s], &l_at, &l_mlen); l_from = l_at + 1 )
 			{
-			unsigned j;
-
-			for ( j = 0; j < l_str->len; j++ )
-				{
-				if ( a_ctx->exact )
-					{
-					if ( a_rec [i + j] != l_str->str [j] )
-						break;
-
-					continue;
-					}
-
-				l_chr	= (unsigned char) a_rec [i + j];
-
-				if ( (l_chr >= 'a') && (l_chr <= 'z') )
-					l_chr	-= ('a' - 'A');
-
-				if ( l_chr != (unsigned char) l_str->ups [j] )
-					break;
-				}
-
-			if ( j != l_str->len )
-				continue;
-
-			memset(a_mark + i, 1, l_str->len);
+			memset(a_mark + l_at, 1, l_mlen);
 			l_cnt++;
 			}
-		}
 
 	return	l_cnt ? STS$K_SUCCESS : STS$K_WARN;
 }

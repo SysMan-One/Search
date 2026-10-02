@@ -55,6 +55,13 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-19		 2-OCT-2026	RRL
+**		A search string carries its case-folded form character by
+**		character (WIDE, NCHR, FOLD) and the two spellings of the
+**		character the scan anchors on (WANCHOR, ALO/AUP), so that the
+**		case is ignored in any script the locale knows, not in ASCII
+**		alone.
+**
 **	X01-18		 2-OCT-2026	RRL
 **		SEARCH$K_SPLITMIN, SEARCH$K_SPLITPIECE: a large mapped file is
 **		searched in pieces by several threads at once.
@@ -154,11 +161,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-18"
+#define	__IDENT__	"X01-19"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.18.0"
+#define	__REV__		"1.19.0"
 #endif
 
 #ifndef	__FAC__
@@ -167,6 +174,7 @@
 
 #include	<stdint.h>
 #include	<stddef.h>
+#include	<wchar.h>
 #include	<sys/types.h>
 
 #include	"utility_routines.h"
@@ -363,10 +371,21 @@ enum	{
 */
 typedef	struct	srch_str_t
 {
-	unsigned	len;			/* Length of the string, characters		*/
+	unsigned	len;			/* Length of the string, bytes			*/
 	unsigned	anchor;			/* Position the case-blind scan anchors on	*/
 	char		str [SEARCH$K_SZ_STR];	/* The string as it has been given		*/
-	char		ups [SEARCH$K_SZ_STR];	/* The same, upper-cased			*/
+	char		ups [SEARCH$K_SZ_STR];	/* The same, ASCII letters upper-cased		*/
+
+	/*
+	**  A string that is not ASCII alone is matched case-blind character by
+	**  character, through the case mapping of the locale.
+	*/
+	int		wide;			/* Not ASCII alone: the case is folded by wide	*/
+	unsigned	nchr,			/* Its characters				*/
+			wanchor;		/* The character the scan anchors on		*/
+	unsigned char	alen [2];		/* Bytes of the two spellings of the anchor	*/
+	char		alt [2][8];		/* The two spellings: lower, upper case		*/
+	wint_t		fold [SEARCH$K_SZ_STR];	/* Every character, in lower case		*/
 } SEARCH$STR;
 
 /*
