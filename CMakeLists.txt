@@ -13,6 +13,13 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 2-OCT-2026	RRL	X-22 : The help libraries are translated
+#					NOFACILITY.  HELP_ADD_LIBRARY() roots a
+#					library at the project name by default;
+#					doc/searchlib[_ru].md already begin with
+#					the one topic SEARCH, so the root put every
+#					topic a level too deep and "HELP SEARCH
+#					/EXACT" found nothing.
 #		21-AUG-2026	RRL	X-21 : __REV__ of every module is checked
 #					against its __IDENT__ at configuration
 #					time; they had all stood at 1.0.0.
@@ -334,13 +341,13 @@ set(SEARCH$K_HLBDIR "${CMAKE_INSTALL_DATAROOTDIR}/help"
 if ( SEARCH$M_HELPLIB AND HELP_FOUND )
 	message(STATUS "SEARCH: help libraries translated by the HELP package")
 
-	help_add_library(NAME searchlib ALL
+	help_add_library(NAME searchlib ALL NOFACILITY
 		SOURCE		${CMAKE_CURRENT_SOURCE_DIR}/doc/searchlib.md
 		OUTPUT		${CMAKE_CURRENT_BINARY_DIR}/search.hlb
 		IDENT		${SEARCH$K_IDENT}
 		DESTINATION	${SEARCH$K_HLBDIR})
 
-	help_add_library(NAME searchlib_ru ALL
+	help_add_library(NAME searchlib_ru ALL NOFACILITY
 		SOURCE		${CMAKE_CURRENT_SOURCE_DIR}/doc/searchlib_ru.md
 		OUTPUT		${CMAKE_CURRENT_BINARY_DIR}/search_ru.hlb
 		IDENT		${SEARCH$K_IDENT}RU

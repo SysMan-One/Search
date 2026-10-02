@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-24"
-#define	__REV__		"1.24.0"
+#define	__IDENT__	"X01-24ECO1"
+#define	__REV__		"1.24.1"
 
 /*
 **++
@@ -107,6 +107,13 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-24ECO1	 2-OCT-2026	RRL
+**		"почини справку": the help libraries are built NOFACILITY -
+**		HELP_ADD_LIBRARY() rooted them at the facility SEARCH, and the
+**		source, which already begins with its own topic SEARCH, sank a
+**		level, so "HELP SEARCH /EXACT" found nothing (the test helplib
+**		failed 6 of 7).  Nothing in this module changed but the ident.
 **
 **	X01-19		21-AUG-2026	RRL
 **		The patterns of /EXCLUDE are normalized after the account
