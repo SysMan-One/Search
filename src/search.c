@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-24ECO1"
-#define	__REV__		"1.24.1"
+#define	__IDENT__	"X01-25"
+#define	__REV__		"1.25.0"
 
 /*
 **++
@@ -44,6 +44,8 @@
 **					Linux has to a creation time
 **		    /RECURSIVE		descend into the subdirectories, the
 **					analogue of the [...] of OpenVMS
+**		    /BINARY=option	a binary file: NOTE that it matches
+**					(default), SKIP it, or search it as TEXT
 **		    /HELP		display the syntax
 **
 **		The first word that is not a qualifier is the list of the
@@ -107,6 +109,12 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-25		 2-OCT-2026	RRL
+**		"доработай search": /BINARY=NOTE|SKIP|TEXT - what is done with
+**		a binary file, one with a NUL among its first 32 KB.  NOTE, the
+**		default, reports in one line that the file matches instead of
+**		displaying its "records".
 **
 **	X01-24ECO1	 2-OCT-2026	RRL
 **		"почини справку": the help libraries are built NOFACILITY -
@@ -238,6 +246,7 @@ enum	{
 	SEARCH$K_QUAL_MODIFIED,
 	SEARCH$K_QUAL_CREATED,
 	SEARCH$K_QUAL_RECURSIVE,
+	SEARCH$K_QUAL_BINARY,
 	SEARCH$K_QUAL_HELP,
 
 	SEARCH$K_QUAL_MAX
@@ -270,6 +279,17 @@ static	CLI_KEYWORD	s_hlkwd [] = {
 	};
 
 /*
+**  The keywords of /BINARY.  The value of a keyword is the SEARCH$K_BIN_*
+**  constant it stands for.
+*/
+static	CLI_KEYWORD	s_binkwd [] = {
+	{ .name = {$ASCINI("NOTE")},	.val = SEARCH$K_BIN_NOTE },
+	{ .name = {$ASCINI("SKIP")},	.val = SEARCH$K_BIN_SKIP },
+	{ .name = {$ASCINI("TEXT")},	.val = SEARCH$K_BIN_TEXT },
+	{ .name = { .len = 0 } }
+	};
+
+/*
 **  The qualifier table of the utility.  An empty name closes the table.
 */
 static	CLI_PQDESC	s_quals [] = {
@@ -290,6 +310,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("MODIFIED")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("CREATED")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("RECURSIVE")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL,	.flag = CLI$M_NEGATABLE },
+	{ .name = {$ASCINI("BINARY")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_binkwd },
 	{ .name = {$ASCINI("HELP")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = { .len = 0 } }
 	};
@@ -327,6 +348,8 @@ static	const char	s_usage [] = {
 	"    /BEFORE=time        take the files older than\n"
 	"    /MODIFIED /CREATED  which time stamp /SINCE and /BEFORE apply to\n"
 	"    /RECURSIVE          descend into the subdirectories\n"
+	"    /BINARY=option      a binary file: NOTE (default) that it matches,\n"
+	"                        SKIP it, or search it as TEXT\n"
 	"    /HELP               display this text\n"
 	"\n"
 	"A search string is a plain substring; a file specification is expanded\n"
@@ -697,6 +720,18 @@ int		l_wincnt = 0;
 
 			if ( !(1 & s_search$cvtkwd(s_hlkwd, l_str, &a_ctx->hlstyle)) )
 				return	$SRCHMSG(SEARCH$_IVQUAL, l_str, "HIGHLIGHT");
+			}
+		}
+
+	/* ... /BINARY ... */
+	if ( 1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_BINARY], NULL) )
+		{
+		if ( 1 & __cli$get_value(a_clictx, &s_quals[SEARCH$K_QUAL_BINARY], &l_val) )
+			{
+			__util$asc2str(&l_val, l_str);
+
+			if ( !(1 & s_search$cvtkwd(s_binkwd, l_str, &a_ctx->binary)) )
+				return	$SRCHMSG(SEARCH$_IVQUAL, l_str, "BINARY");
 			}
 		}
 

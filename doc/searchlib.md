@@ -360,6 +360,26 @@ walk an endless one.
 Nesting deeper than 32 levels is not descended into, and is
 reported with %SEARCH-W-TOODEEP.
 
+## /BINARY -- what is done with a binary file
+
+```
+/BINARY=NOTE     say in one line that the file matches (default)
+/BINARY=SKIP     do not search the file at all
+/BINARY=TEXT     search and display it as any other file
+```
+
+A file is binary when it carries a NUL byte among its first 32 KB,
+the test GREP makes. Its "records" are whatever happens to lie
+between two line feeds, and displayed on a terminal they are noise
+or worse, so by default the file is searched up to its first match
+and reported by one line in place of the records:
+
+```
+%SEARCH-I-BINMATCH, binary file build/app.o matches
+```
+
+The completion status counts such a file as a match.
+
 ## /HELP -- display the description
 
 Displays the description of the utility -- this very library -- and
@@ -536,6 +556,7 @@ StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 %SEARCH-W-TOODEEP       a directory is nested too deep to descend
 %SEARCH-W-TOOMANY       a list is longer than the utility accepts
 %SEARCH-E-NOTOPIC       /HELP names a topic the library has not
+%SEARCH-I-BINMATCH      a binary file matches (output, /BINARY=NOTE)
 ```
 
 A diagnostic is signalled by the message subsystem of the STARLET

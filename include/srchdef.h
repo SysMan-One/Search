@@ -55,6 +55,10 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-14		 2-OCT-2026	RRL
+**		SEARCH$K_BIN_* and the BINARY member of the context: what is
+**		done with a binary file, /BINARY.
+**
 **	X01-13		14-AUG-2026	RRL
 **		SEARCH$_SEARCHING and SEARCH$_SELECTING - what the utility
 **		has made of the command, reported before the first file is
@@ -124,11 +128,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-13"
+#define	__IDENT__	"X01-14"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.13.0"
+#define	__REV__		"1.14.0"
 #endif
 
 #ifndef	__FAC__
@@ -274,6 +278,19 @@ enum	{
 	};
 
 /*
+**  What is done with a binary file - one that carries a NUL among its
+**  first SEARCH$K_SZ_BLK bytes, /BINARY.  Ordered - hence an enumeration;
+**  the keyword table lives in SEARCH.C.
+*/
+enum	{
+	SEARCH$K_BIN_NOTE	= 0,		/* Searched, a match is noted in one line	*/
+	SEARCH$K_BIN_SKIP,			/* Not searched at all				*/
+	SEARCH$K_BIN_TEXT,			/* Searched and displayed as any other file	*/
+
+	SEARCH$K_BIN_MAX			/* End-Of-List					*/
+	};
+
+/*
 **  Which time stamp of a file /SINCE and /BEFORE are applied to.
 */
 enum	{
@@ -366,6 +383,7 @@ typedef	struct	srch_ctx_t
 	int		timsrc;			/* SEARCH$K_TIME_*, the stamp of the heading	*/
 	int		hlstyle;		/* SEARCH$K_HL_*, the style of the marking	*/
 	int		exact;			/* /EXACT: the case is significant		*/
+	int		binary;			/* SEARCH$K_BIN_*, /BINARY			*/
 	int		numbers;		/* /NUMBERS: prefix the record number		*/
 	int		heading;		/* /HEADING: announce every file		*/
 	int		log;			/* /LOG: report every file searched		*/

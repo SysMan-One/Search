@@ -38,6 +38,7 @@ it against the shell:
 | `/SINCE=time`, `/BEFORE=time` | take the files not older than / older than |
 | `/MODIFIED`, `/CREATED` | which time stamp the two above apply to |
 | `/RECURSIVE` | descend into the subdirectories -- the analogue of `[...]` |
+| `/BINARY=option` | a binary file (a NUL in its first 32 KB): `NOTE` that it matches (default), `SKIP` it, or search it as `TEXT` |
 | `/HELP [topic]` | display the description -- the help library of the product |
 
 A qualifier may be abbreviated as long as the abbreviation is

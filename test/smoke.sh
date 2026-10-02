@@ -21,6 +21,8 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 2-OCT-2026	RRL	X-10 : The checks of /BINARY: a binary file
+#					is noted, skipped or searched as text.
 #		21-AUG-2026	RRL	X-09 : The checks of the two spellings of a
 #					single-character wildcard.
 #
@@ -405,6 +407,34 @@ if [ "`$SEARCH -- qual.txt /EXACT | grep -c 'the /EXACT'`" = "1" ]
 	then ok "a lone -- ends the qualifiers"
 	else ko "a lone -- ends the qualifiers"
 fi
+
+#
+#	A binary file - a NUL among its first bytes - is noted in one line by
+#	default, left alone under /BINARY=SKIP, displayed under /BINARY=TEXT
+#
+printf 'head alpha\n\000\001 alpha junk\nmore alpha\n' > bin.dat
+
+if [ "`$SEARCH bin.dat alpha /NOHEADING`" = "%SEARCH-I-BINMATCH, binary file bin.dat matches" ]
+	then ok "a binary file is noted in one line"
+	else ko "a binary file is noted in one line"
+fi
+
+if $SEARCH bin.dat alpha /BINARY=SKIP >/dev/null 2>&1
+	then ko "/BINARY=SKIP leaves a binary file alone"
+	else ok "/BINARY=SKIP leaves a binary file alone"
+fi
+
+if [ "`$SEARCH bin.dat alpha /BINARY=TEXT /NOHEADING | wc -l`" = "3" ]
+	then ok "/BINARY=TEXT searches a binary file as text"
+	else ko "/BINARY=TEXT searches a binary file as text"
+fi
+
+if [ "`$SEARCH alpha.txt alpha /NOHEADING | wc -l`" = "3" ]
+	then ok "a text file is not taken for a binary one"
+	else ko "a text file is not taken for a binary one"
+fi
+
+rm -f bin.dat
 
 echo "%SEARCH-I-SMOKE, $CHECK check(s), $FAILED failure(s)"
 

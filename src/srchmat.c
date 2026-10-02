@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHMAT"
-#define	__IDENT__	"X01-10"
-#define	__REV__		"1.10.0"
+#define	__IDENT__	"X01-11"
+#define	__REV__		"1.11.0"
 
 /*
 **++
@@ -40,6 +40,12 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		 2-OCT-2026	RRL
+**		A binary file - a NUL among its first SEARCH$K_SZ_BLK bytes,
+**		the test GREP makes - is no longer displayed record by record:
+**		/BINARY=NOTE (the default) reports in one line that it
+**		matches, SKIP leaves it alone, TEXT searches it as before.
 **
 **	X01-10		 3-AUG-2026	RRL
 **		The FAO parameters of a message are cast and counted by
@@ -928,7 +934,7 @@ unsigned	l_reclen = 0, l_slot = 0, l_pending = 0, l_ringcnt = 0, l_namlen, l_pad
 const char *	l_cleanend = NULL;
 uint64_t	l_seen = 0;
 int		l_status, l_fd, l_heading = 0, l_longrec = 0;
-int		l_prefilt, l_needcnt;
+int		l_prefilt, l_needcnt, l_binary = 0;
 
 	/* The reader has answered Q at the pager - nothing more is to be displayed */
 	if ( a_ctx->out->quit )
@@ -1047,6 +1053,37 @@ int		l_prefilt, l_needcnt;
 			}
 		}
 
+	/*
+	**  A binary file - one that carries a NUL among its first
+	**  SEARCH$K_SZ_BLK bytes, which is the test GREP makes - is not
+	**  displayed record by record: its "records" are whatever happens to
+	**  lie between two bytes of 0x0A, and on a terminal they are noise or
+	**  worse.  /BINARY=TEXT searches it as any other file, SKIP leaves it
+	**  alone, and NOTE, the default, says in one line that it matches.
+	**
+	**  A file that is read rather than mapped is looked at in its first
+	**  buffer; a READ(2) failure here is met again by the loop below,
+	**  which reports it.
+	*/
+	if ( a_ctx->binary != SEARCH$K_BIN_TEXT )
+		{
+		unsigned	l_head;
+
+		if ( !l_rab->mapped )
+			s_srch$fill(l_rab);
+
+		l_head		= l_rab->len - l_rab->pos;
+		l_binary	= (NULL != memchr(l_rab->buf + l_rab->pos, '\0',
+					(l_head > SEARCH$K_SZ_BLK) ? SEARCH$K_SZ_BLK : l_head));
+
+		/* Left alone: the file is made to look exhausted before a byte of it is examined */
+		if ( l_binary && (a_ctx->binary == SEARCH$K_BIN_SKIP) )
+			{
+			l_rab->pos	= l_rab->len;
+			l_rab->eof	= 1;
+			}
+		}
+
 	for ( ;; )
 		{
 		/*
@@ -1161,6 +1198,17 @@ int		l_prefilt, l_needcnt;
 			{
 			l_matched++;
 			a_ctx->stat.recsmatched++;
+
+			/*
+			**  A binary file is reported at its first match and is
+			**  read no further: one match is all the line says.
+			*/
+			if ( l_binary )
+				{
+				$SRCHPUT(a_ctx->out, "%SEARCH-I-BINMATCH, binary file !AZ matches\n", a_fspec);
+
+				break;
+				}
 
 			/* The name of the file is announced before its first match only */
 			if ( a_ctx->heading && !l_heading )
