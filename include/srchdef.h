@@ -55,6 +55,14 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-20		 2-OCT-2026	RRL
+**		SRCH$FAIL.  SPILL and SPILLARG of an output context, and
+**		SEARCH$K_SPILL: the gathered output of a file is put out while
+**		the file is still searched, once it is that file's turn.
+**		SEARCH$K_SPLITPIECE is 2 MB: the pieces of a split
+**		are now displayed as they come, and the gathered display ahead
+**		of the output is a window of them.
+**
 **	X01-19		 2-OCT-2026	RRL
 **		A search string carries its case-folded form character by
 **		character (WIDE, NCHR, FOLD) and the two spellings of the
@@ -161,11 +169,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-19"
+#define	__IDENT__	"X01-20"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.19.0"
+#define	__REV__		"1.20.0"
 #endif
 
 #ifndef	__FAC__
@@ -280,7 +288,10 @@ enum	{
 #define	SEARCH$K_INFLIGHT	8		/* Files queued or searched ahead, per thread	*/
 #define	SEARCH$K_SPLITMIN	(32 * 1024 * 1024)	/* A mapped file this large is searched in	*/
 						/* pieces by several threads at once		*/
-#define	SEARCH$K_SPLITPIECE	(8 * 1024 * 1024)	/* The smallest piece worth a thread of its own	*/
+#define	SEARCH$K_SPILL		(1024 * 1024)	/* Gathered output offered to SPILL, bytes	*/
+#define	SEARCH$K_SPLITPIECE	(2 * 1024 * 1024)	/* A piece of a split: small, so that the	*/
+						/* display gathered ahead of the output stays	*/
+						/* small - see S_SRCH$SPLIT			*/
 
 #define	SEARCH$K_DEFWIN		1		/* /WINDOW given without a value		*/
 #define	SEARCH$K_DEFROWS	24		/* Height of the page, no terminal to ask	*/
@@ -408,6 +419,10 @@ typedef	struct	srch_out_t
 			col;			/* Current column, for the wrapped records	*/
 
 	char *		mem;			/* FD < 0: the heap area the output gathers in	*/
+	int		(*spill) (struct srch_out_t *a_out, void *a_arg);
+						/* Offered MEM once it holds SEARCH$K_SPILL;	*/
+						/* success: it has been put out, MEM is emptied	*/
+	void *		spillarg;		/* The argument of SPILL			*/
 	size_t		memlen,			/* Bytes gathered there				*/
 			memmax;			/* Capacity of the area				*/
 
@@ -545,6 +560,7 @@ int	srch$out_mem	(SEARCH$OUT *a_out);
 int	srch$out_take	(SEARCH$OUT *a_out, char **a_mem, size_t *a_len);
 int	srch$note	(int a_sts);
 int	srch$errors	(void);
+void	srch$fail	(void);
 int	srch$out_init	(SEARCH$OUT *a_out, int a_fd);
 int	srch$out_page	(SEARCH$OUT *a_out, int a_page);
 int	srch$out_final	(SEARCH$OUT *a_out);

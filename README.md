@@ -146,8 +146,9 @@ module, the routine and the line as well.
 
 **Completion.**  The image exits with the codes of `grep`: 0 when at least
 one record matched, 1 when nothing did, 2 when an error was signalled (a
-file that could not be opened or read, a command that could not be
-carried out), whatever else has matched.  Nothing matched at all is
+file that could not be opened or read, a file specification that selected
+no file, a command that could not be carried out), whatever else has
+matched.  Nothing matched at all is
 reported by `%SEARCH-W-NOMATCHES`.
 
 ## Build

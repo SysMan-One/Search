@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-30"
-#define	__REV__		"1.30.0"
+#define	__IDENT__	"X01-31"
+#define	__REV__		"1.31.0"
 
 /*
 **++
@@ -113,6 +113,14 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-31		 2-OCT-2026	RRL
+**		"делай 3-5": a file specification that selects no file is
+**		still %SEARCH-W-NOFILES, but completes with 2, as GREP does with
+**		a name that is not there (SRCH$FAIL).  The walk asks LSTAT only
+**		where it must (SRCHFIL X01-05); a large result is put out as it
+**		comes rather than gathered whole (SRCHTHR X01-02, SRCHMAT
+**		X01-16).
 **
 **	X01-30		 2-OCT-2026	RRL
 **		"делай 1 и 2": the case is ignored in any script the locale
@@ -1428,8 +1436,12 @@ int		l_status, l_fd = STDOUT_FILENO;
 		l_status	= srch$forfiles(l_elem [i], &l_sel,
 					(l_ctx.threads > 1) ? srch$pool_file : s_search$onefile, &l_ctx);
 
+		/* A specification that selected no file: a warning, as on OpenVMS, and completion code 2, as with GREP */
 		if ( l_status == STS$K_WARN )
+			{
 			$SRCHMSG(SEARCH$_NOFILES, l_elem [i]);
+			srch$fail();
+			}
 
 		/* The reader has abandoned the display at the pager */
 		if ( l_status == STS$K_FATAL )

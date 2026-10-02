@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHTHR"
-#define	__IDENT__	"X01-01"
-#define	__REV__		"1.1.0"
+#define	__IDENT__	"X01-02"
+#define	__REV__		"1.2.0"
 
 /*
 **++
@@ -49,6 +49,14 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-02		 2-OCT-2026	RRL
+**		The file at the head of the queue - the next to be displayed -
+**		puts its gathered output out as it goes, a megabyte at a time
+**		(S_SRCH$SPILL), instead of holding all of it until the file is
+**		done: every file before it has been displayed, so nobody else
+**		writes meanwhile, and the order is the same.  A file with a
+**		result of hundreds of megabytes no longer holds all of it.
+**
 **	X01-01		 2-OCT-2026	RRL
 **		Initial revision: "доработай search", a multi-threaded walk.
 **
@@ -68,6 +76,7 @@
 typedef	struct	srch_job_t
 {
 	char *		fspec;			/* The specification of the file, heap		*/
+	uint64_t	seq;			/* Its place in the order of the walk		*/
 	int		done;			/* The search is over, the output gathered	*/
 	int		status;			/* What SRCH$FILE has returned			*/
 	SEARCH$STAT	stat;			/* The counters of this file alone		*/
@@ -111,6 +120,45 @@ static	struct
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
+**	The SPILL routine of the output a thread gathers for a file: once
+**	the file is at the head of the queue, every file before it has been
+**	displayed and nothing else writes to the output until this file is
+**	done - the main thread waits for it - so what has been gathered is
+**	put out at once rather than held to the end of the file.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_out		The output context of the thread
+**	a_arg		The file, SEARCH$JOB
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	S_POOL.HEAD, read; the output context of the run, written.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- put out, the area is to be emptied;
+**	STS$K_WARN	- not this file's turn yet, keep gathering.
+**--
+*/
+static	int	s_srch$spill	(
+		SEARCH$OUT *	a_out,
+		void *		a_arg
+			)
+{
+SEARCH$JOB *	l_job = (SEARCH$JOB *) a_arg;
+
+	if ( l_job->seq != __atomic_load_n(&s_pool.head, __ATOMIC_ACQUIRE) )
+		return	STS$K_WARN;
+
+	srch$put_raw(s_pool.ctx->out, (unsigned) a_out->memlen, a_out->mem);
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
 **	A thread of the pool: take the next queued file, search it with a
 **	context of its own into the heap, mark it done; until told to stop.
 **
@@ -148,7 +196,8 @@ SEARCH$JOB *	l_job;
 			break;
 			}
 
-		l_job	= &s_pool.ring [s_pool.taken % s_pool.inflight];
+		l_job		= &s_pool.ring [s_pool.taken % s_pool.inflight];
+		l_job->seq	= s_pool.taken;
 		s_pool.taken++;
 
 		pthread_mutex_unlock(&s_pool.lock);
@@ -163,6 +212,8 @@ SEARCH$JOB *	l_job;
 		memcpy(&l_ctx, &s_pool.tmpl, sizeof(SEARCH$CTX));
 
 		srch$out_mem(&l_out);
+		l_out.spill	= s_srch$spill;
+		l_out.spillarg	= l_job;
 		l_ctx.out	= &l_out;
 
 		l_job->status	= srch$file(&l_ctx, l_job->fspec);
@@ -251,7 +302,7 @@ SEARCH$CTX *	l_ctx = s_pool.ctx;
 		memset(l_job, 0, sizeof(SEARCH$JOB));
 
 		pthread_mutex_lock(&s_pool.lock);
-		s_pool.head++;
+		__atomic_store_n(&s_pool.head, s_pool.head + 1, __ATOMIC_RELEASE);
 		pthread_mutex_unlock(&s_pool.lock);
 
 		/* A slot has been freed: the walk waited for one, and has it now */

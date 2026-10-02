@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHFIL"
-#define	__IDENT__	"X01-04"
-#define	__REV__		"1.4.0"
+#define	__IDENT__	"X01-05"
+#define	__REV__		"1.5.0"
 
 /*
 **++
@@ -48,6 +48,16 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-05		 2-OCT-2026	RRL
+**		The walk no longer calls LSTAT on every entry of a directory:
+**		the type READDIR reports (D_TYPE) is kept as the first byte of
+**		the name and decides - a directory is descended into, a link
+**		or a special file passed over, a regular file matched against
+**		the pattern - and LSTAT is called only for a file that /SINCE
+**		or /BEFORE has to see the time of, or where the file system
+**		reports no type.  On the dpdk tree it was two thirds of the
+**		cost of a walk.
 **
 **	X01-04		21-AUG-2026	RRL
 **		The matching of a name is UTIL$PATTERN_MATCH of the STARLET
@@ -312,11 +322,13 @@ static	int	s_srch$excluded	(
 */
 static	int	s_srch$dir_add	(
 		SEARCH$DIR *	a_dir,
-	const	char *		a_name
+	const	char *		a_name,
+		unsigned char	a_type
 			)
 {
 char **		l_new;
 unsigned	l_max;
+size_t		l_len = strlen(a_name);
 
 	if ( a_dir->cnt == a_dir->max )
 		{
@@ -329,8 +341,12 @@ unsigned	l_max;
 		a_dir->max	= l_max;
 		}
 
-	if ( !(a_dir->name [a_dir->cnt] = strdup(a_name)) )
-		return	$SRCHMSG(SEARCH$_NOMEM, (strlen(a_name) + 1), errno, strerror(errno));
+	/* The type READDIR has reported travels as the first byte, the name follows it */
+	if ( !(a_dir->name [a_dir->cnt] = malloc(l_len + 2)) )
+		return	$SRCHMSG(SEARCH$_NOMEM, (l_len + 2), errno, strerror(errno));
+
+	a_dir->name [a_dir->cnt][0]	= (char) a_type;
+	memcpy(a_dir->name [a_dir->cnt] + 1, a_name, l_len + 1);
 
 	a_dir->cnt++;
 
@@ -394,7 +410,8 @@ static	int	s_srch$namecmp	(
 	const	void *		a_2
 			)
 {
-	return	strcmp(*(const char **) a_1, *(const char **) a_2);
+	/* Past the byte of the type - see S_SRCH$DIR_ADD */
+	return	strcmp(*(const char **) a_1 + 1, *(const char **) a_2 + 1);
 }
 
 
@@ -515,7 +532,7 @@ int		l_status = STS$K_SUCCESS;
 		if ( !strcmp(l_dp->d_name, ".") || !strcmp(l_dp->d_name, "..") )
 			continue;
 
-		if ( !(1 & (l_status = s_srch$dir_add(&l_names, l_dp->d_name))) )
+		if ( !(1 & (l_status = s_srch$dir_add(&l_names, l_dp->d_name, l_dp->d_type))) )
 			break;
 		}
 
@@ -533,19 +550,49 @@ int		l_status = STS$K_SUCCESS;
 
 	for ( unsigned i = 0; i < l_names.cnt; i++ )
 		{
-		if ( !(1 & s_srch$mkspec(a_dir, l_names.name [i], sizeof(l_fspec), l_fspec)) )
+		unsigned char	l_type = (unsigned char) l_names.name [i][0];
+		const char *	l_name = l_names.name [i] + 1;
+		int		l_isdir;
+
+		/*
+		**  The type READDIR has reported decides without a system call:
+		**  a link and a special file are never taken, and a regular file
+		**  whose name does not fit the pattern is not looked at further.
+		**  Only where the file system has reported no type is LSTAT
+		**  asked.
+		*/
+		if ( (l_type != DT_UNKNOWN) && (l_type != DT_DIR) && (l_type != DT_REG) )
+			continue;
+
+		if ( (l_type == DT_REG) && !(1 & s_srch$wildmat(a_pat, l_name)) )
+			continue;
+
+		if ( (l_type == DT_DIR) && !a_sel->recurse )
+			continue;
+
+		if ( !(1 & s_srch$mkspec(a_dir, l_name, sizeof(l_fspec), l_fspec)) )
 			continue;
 
 		/*
 		**  LSTAT, not STAT: a symbolic link is looked at as a link.  A
 		**  link to a directory is therefore never descended into, which
 		**  is what keeps a link pointing at an ancestor from turning the
-		**  walk into an endless one.
+		**  walk into an endless one.  Called for an entry of no reported
+		**  type, and for a file whose time the selection has to see.
 		*/
-		if ( lstat(l_fspec, &l_st) )
-			continue;
+		if ( (l_type == DT_UNKNOWN) || ((l_type == DT_REG) && (a_sel->hassince || a_sel->hasbefore)) )
+			{
+			if ( lstat(l_fspec, &l_st) )
+				continue;
 
-		if ( S_ISDIR(l_st.st_mode) )
+			l_isdir	= S_ISDIR(l_st.st_mode);
+
+			if ( !l_isdir && !S_ISREG(l_st.st_mode) )
+				continue;
+			}
+		else	l_isdir	= (l_type == DT_DIR);
+
+		if ( l_isdir )
 			{
 			if ( !a_sel->recurse )
 				continue;
@@ -557,7 +604,7 @@ int		l_status = STS$K_SUCCESS;
 				}
 
 			/* An excluded directory is not descended into at all */
-			if ( 1 & s_srch$excluded(a_sel, l_fspec, l_names.name [i]) )
+			if ( 1 & s_srch$excluded(a_sel, l_fspec, l_name) )
 				continue;
 
 			if ( STS$K_FATAL == s_srch$walk(l_fspec, a_pat, a_sel, a_depth + 1, a_rtn, a_arg, a_cnt) )
@@ -570,13 +617,11 @@ int		l_status = STS$K_SUCCESS;
 			continue;
 			}
 
-		if ( !S_ISREG(l_st.st_mode) )
+		/* A file of no reported type is matched against the pattern here */
+		if ( (l_type == DT_UNKNOWN) && !(1 & s_srch$wildmat(a_pat, l_name)) )
 			continue;
 
-		if ( !(1 & s_srch$wildmat(a_pat, l_names.name [i])) )
-			continue;
-
-		if ( 1 & s_srch$excluded(a_sel, l_fspec, l_names.name [i]) )
+		if ( 1 & s_srch$excluded(a_sel, l_fspec, l_name) )
 			continue;
 
 		if ( !(1 & s_srch$intime(a_sel, &l_st)) )

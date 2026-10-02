@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHUTL"
-#define	__IDENT__	"X01-09"
-#define	__REV__		"1.9.0"
+#define	__IDENT__	"X01-10"
+#define	__REV__		"1.10.0"
 
 /*
 **++
@@ -31,6 +31,12 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-10		 2-OCT-2026	RRL
+**		A context gathering into the heap offers what it holds to its
+**		SPILL routine once that is SEARCH$K_SPILL.  SRCH$FAIL: a condition signalled below severity E that is to
+**		count as an error for the completion code all the same - a
+**		file specification that selected no file.
 **
 **	X01-09		 2-OCT-2026	RRL
 **		For /THREADS: an output context over no descriptor gathers into
@@ -285,6 +291,10 @@ static	int	s_srch$emit	(
 	memcpy(a_out->mem + a_out->memlen, a_buf, a_len);
 	a_out->memlen	+= a_len;
 
+	/* Enough gathered: the owner may put it out now - see SRCHTHR.C */
+	if ( a_out->spill && (a_out->memlen >= SEARCH$K_SPILL) && (1 & a_out->spill(a_out, a_out->spillarg)) )
+		a_out->memlen	= 0;
+
 	return	STS$K_SUCCESS;
 }
 
@@ -355,6 +365,28 @@ int	srch$note	(
 		__atomic_add_fetch(&s_errors, 1, __ATOMIC_RELAXED);
 
 	return	a_sts;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Count an error that has been signalled at a lower severity - a
+**	file specification that selected no file is %SEARCH-W-NOFILES, as
+**	on OpenVMS, but the completion code is 2, as with GREP, whose shell
+**	would have handed it the specification as a name that is not there.
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	S_ERRORS, advanced atomically.
+**
+**  RETURN VALUE:
+**	None.
+**--
+*/
+void	srch$fail	(void)
+{
+	__atomic_add_fetch(&s_errors, 1, __ATOMIC_RELAXED);
 }
 
 

@@ -21,6 +21,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		 2-OCT-2026	RRL	X-14 : A file specification that selects no file
+#					completes with 2, even beside one that
+#					matched.
+#
 #		 2-OCT-2026	RRL	X-13 : The case is ignored in Cyrillic too, the
 #					highlighting marks it; a record after a
 #					terminator followed by 0x0B is numbered
@@ -614,6 +618,21 @@ if [ "`$SEARCH vt.txt target /NUMBERS /NOHEADING /THREADS=1 | awk '{ print $1 }'
 fi
 
 rm -f vt.txt
+
+#
+#	A file specification that selects no file is an error for the completion
+#	code, as a name that is not there is for GREP - beside a match too
+#
+printf 'one alpha\n' > here.txt
+$SEARCH 'nosuch*.txt' alpha > /dev/null 2>&1;		L_RC1=$?
+$SEARCH 'here.txt,nosuch*.txt' alpha > /dev/null 2>&1;	L_RC2=$?
+
+if [ "$L_RC1$L_RC2" = "22" ]
+	then ok "a specification that selects no file completes with 2"
+	else ko "a specification that selects no file completes with 2 ($L_RC1$L_RC2)"
+fi
+
+rm -f here.txt
 
 echo "%SEARCH-I-SMOKE, $CHECK check(s), $FAILED failure(s)"
 

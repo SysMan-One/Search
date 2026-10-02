@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHMAT"
-#define	__IDENT__	"X01-15"
-#define	__REV__		"1.15.0"
+#define	__IDENT__	"X01-16"
+#define	__REV__		"1.16.0"
 
 /*
 **++
@@ -43,6 +43,15 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-16		 2-OCT-2026	RRL
+**		A split file is cut into pieces of about SEARCH$K_SPLITPIECE,
+**		as many as that makes, run by at most /THREADS threads in their
+**		order; every piece is displayed as soon as it and all before it
+**		are done and is let go of at once, and the threads run no more
+**		than /THREADS + 2 pieces ahead of the display - what waits in
+**		the heap no longer grows with the size of the file (500 MB of
+**		log, 3 M lines out: 511 MB of heap before, 40 MB now).
 **
 **	X01-15		 2-OCT-2026	RRL
 **		The count of the record terminators of a skipped region was
@@ -1447,43 +1456,122 @@ unsigned	l_markmax = 0, l_reclen, l_reglen;
 
 
 /*
+**  The pieces of one split, and the threads that run them.  The threads
+**  take the pieces in their order; under the second pass a thread does not
+**  run ahead of the display by more than WINDOW pieces, so that what is
+**  gathered in the heap and not yet displayed stays within WINDOW pieces'
+**  worth whatever the size of the file.
+*/
+typedef	struct	srch_split_t
+{
+	SEARCH$PIECE *	pcs;			/* The pieces					*/
+	unsigned	cnt,			/* Their number					*/
+			next,			/* Next piece to be taken by a thread		*/
+			shown,			/* Pieces displayed so far			*/
+			window;			/* How far a thread may run ahead, pieces	*/
+	int		paced;			/* The window applies: the second pass		*/
+	int *		done;			/* Per piece: it has been run			*/
+
+	pthread_mutex_t	lock;
+	pthread_cond_t	cond;			/* A piece is done, or one has been displayed	*/
+} SEARCH$SPLIT;
+
+
+/*
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
-**	Run the pieces of a split, each by a thread of its own; a piece
-**	whose thread cannot be created is run by the caller, after the
-**	others have been started.
+**	A thread of a split: take the next piece, run it, mark it done; on
+**	the second pass, wait while the display lags too far behind.
 **
 **  FORMAL PARAMETERS:
 **
-**	a_cnt		Number of the pieces
-**	a_pcs		The pieces
+**	a_arg		The split, SEARCH$SPLIT
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	The split, under its lock.
+**
+**  RETURN VALUE:
+**	NULL.
+**--
+*/
+static	void *	s_srch$splitter	(
+		void *		a_arg
+			)
+{
+SEARCH$SPLIT *	l_sp = (SEARCH$SPLIT *) a_arg;
+unsigned	l_k;
+
+	for ( ;; )
+		{
+		pthread_mutex_lock(&l_sp->lock);
+
+		while ( l_sp->paced && (l_sp->next < l_sp->cnt) && (l_sp->next >= (l_sp->shown + l_sp->window)) )
+			pthread_cond_wait(&l_sp->cond, &l_sp->lock);
+
+		if ( l_sp->next >= l_sp->cnt )
+			{
+			pthread_mutex_unlock(&l_sp->lock);
+			break;
+			}
+
+		l_k	= l_sp->next++;
+
+		pthread_mutex_unlock(&l_sp->lock);
+
+		s_srch$piece(&l_sp->pcs [l_k]);
+
+		pthread_mutex_lock(&l_sp->lock);
+		l_sp->done [l_k]	= 1;
+		pthread_cond_broadcast(&l_sp->cond);
+		pthread_mutex_unlock(&l_sp->lock);
+		}
+
+	return	NULL;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Start the threads of a split; a thread that cannot be created is
+**	simply not there - the others take its pieces, and should none be
+**	there at all, the caller runs every piece itself.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_sp		The split
+**	a_nthr		Threads wanted
+**	a_tids		Receives their identifiers
 **
 **  IMPLICIT INPUTS/OUTPUTS:
 **	None.
 **
 **  RETURN VALUE:
-**	None.
+**	The number of the threads started.
 **--
 */
-static	void	s_srch$runpieces	(
-		unsigned	a_cnt,
-		SEARCH$PIECE *	a_pcs
+static	unsigned	s_srch$splitstart	(
+		SEARCH$SPLIT *	a_sp,
+		unsigned	a_nthr,
+		pthread_t *	a_tids
 			)
 {
-pthread_t	l_tids [SEARCH$K_MAXTHREADS];
-int		l_made [SEARCH$K_MAXTHREADS] = {0};
+unsigned	l_made = 0;
 
-	for ( unsigned i = 0; i < a_cnt; i++ )
-		l_made [i]	= !pthread_create(&l_tids [i], NULL, s_srch$piece, &a_pcs [i]);
+	for ( unsigned i = 0; i < a_nthr; i++ )
+		if ( !pthread_create(&a_tids [l_made], NULL, s_srch$splitter, a_sp) )
+			l_made++;
 
-	for ( unsigned i = 0; i < a_cnt; i++ )
-		if ( !l_made [i] )
-			s_srch$piece(&a_pcs [i]);
+	/* None at all: the caller runs every piece - unpaced, it is the one that would display them */
+	if ( !l_made )
+		{
+		a_sp->paced	= 0;
+		s_srch$splitter(a_sp);
+		}
 
-	for ( unsigned i = 0; i < a_cnt; i++ )
-		if ( l_made [i] )
-			pthread_join(l_tids [i], NULL);
+	return	l_made;
 }
 
 
@@ -1492,16 +1580,19 @@ int		l_made [SEARCH$K_MAXTHREADS] = {0};
 **  FUNCTIONAL DESCRIPTION:
 **
 **	Search a large mapped file by several threads at once.  The mapping
-**	is cut into pieces at record boundaries; where the records are
-**	numbered, the terminators of every piece are counted first, in
-**	parallel, so that every piece knows the number its records start
-**	from; then every piece is searched into the heap, and the pieces
-**	are displayed in their order after the heading - the display of a
-**	single thread, byte for byte.
+**	is cut at record boundaries into pieces of about SEARCH$K_SPLITPIECE;
+**	where the records are numbered, the terminators of every piece are
+**	counted first, in parallel, so that every piece knows the number its
+**	records start from.  Then the threads search the pieces in their
+**	order into the heap, and the caller displays every piece as soon as
+**	it and all before it are done - the heading before the first one
+**	that matched - and lets go of it: the display is that of a single
+**	thread, byte for byte, and what waits in the heap is never more than
+**	a window of /THREADS + 2 pieces.
 **
 **	The threads are taken from a budget shared by every file split at
-**	the same time, /THREADS of the run; with fewer than two to be had,
-**	or a file too small for two pieces, nothing is done and the caller
+**	the same time, /THREADS of the run; with fewer than two to be had, or
+**	a file too small for two pieces, nothing is done and the caller
 **	searches the file the usual way.
 **
 **  FORMAL PARAMETERS:
@@ -1520,7 +1611,9 @@ int		l_made [SEARCH$K_MAXTHREADS] = {0};
 **
 **  RETURN VALUE:
 **	STS$K_SUCCESS	- the file has been searched;
-**	STS$K_WARN	- it has not, the caller is to search it.
+**	STS$K_WARN	- it has not, the caller is to search it;
+**	SEARCH$_NOMEM	- the heap has refused, signalled; the caller is to
+**			  search the file.
 **--
 */
 static	int	s_srch$split	(
@@ -1534,19 +1627,23 @@ static	int	s_srch$split	(
 		uint64_t *	a_records
 			)
 {
-SEARCH$PIECE	l_pcs [SEARCH$K_MAXTHREADS] = {0};
-unsigned	l_want, l_cnt = 0;
-int		l_avail, l_init = -1;
+SEARCH$SPLIT	l_sp = {0};
+SEARCH$CTX *	l_tmpl;
+pthread_t	l_tids [SEARCH$K_MAXTHREADS];
+unsigned	l_nthr, l_want, l_made, l_cnt;
+int		l_avail, l_init = -1, l_heading = 0;
 const char *	l_beg = a_map, *l_end = a_map + a_len, *l_cut;
 uint64_t	l_base = 0;
 
 	/* The budget is set once, by the first file split: /THREADS of the run */
 	__atomic_compare_exchange_n(&s_pieces, &l_init, (int) a_ctx->threads, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
 
-	l_want	= (unsigned) (a_len / SEARCH$K_SPLITPIECE);
+	l_cnt	= (unsigned) ((a_len + SEARCH$K_SPLITPIECE - 1) / SEARCH$K_SPLITPIECE);
 
-	if ( l_want > a_ctx->threads )
-		l_want	= a_ctx->threads;
+	if ( l_cnt < 2 )
+		return	STS$K_WARN;
+
+	l_want	= (a_ctx->threads < l_cnt) ? a_ctx->threads : l_cnt;
 
 	if ( l_want > SEARCH$K_MAXTHREADS )
 		l_want	= SEARCH$K_MAXTHREADS;
@@ -1558,11 +1655,37 @@ uint64_t	l_base = 0;
 		if ( (l_avail < 2) || (l_want < 2) )
 			return	STS$K_WARN;
 
-		l_cnt	= ((unsigned) l_avail < l_want) ? (unsigned) l_avail : l_want;
+		l_nthr	= ((unsigned) l_avail < l_want) ? (unsigned) l_avail : l_want;
 		}
-	while ( !__atomic_compare_exchange_n(&s_pieces, &l_avail, l_avail - (int) l_cnt, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED) );
+	while ( !__atomic_compare_exchange_n(&s_pieces, &l_avail, l_avail - (int) l_nthr, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED) );
 
-	/* The cuts: about A_LEN / L_CNT apart, each moved past the next terminator */
+	l_sp.pcs	= calloc(l_cnt, sizeof(SEARCH$PIECE));
+	l_sp.done	= calloc(l_cnt, sizeof(int));
+	l_tmpl		= malloc(sizeof(SEARCH$CTX));
+
+	if ( !l_sp.pcs || !l_sp.done || !l_tmpl )
+		{
+		free(l_sp.pcs);
+		free(l_sp.done);
+		free(l_tmpl);
+		__atomic_add_fetch(&s_pieces, (int) l_nthr, __ATOMIC_ACQ_REL);
+
+		return	$SRCHMSG(SEARCH$_NOMEM, l_cnt * (sizeof(SEARCH$PIECE) + sizeof(int)), errno, strerror(errno));
+		}
+
+	/*
+	**  The pieces start from a copy of the context, not from the context
+	**  itself, whose counters this thread adds to while they run.
+	*/
+	memcpy(l_tmpl, a_ctx, sizeof(SEARCH$CTX));
+
+	pthread_mutex_init(&l_sp.lock, NULL);
+	pthread_cond_init(&l_sp.cond, NULL);
+
+	l_sp.cnt	= l_cnt;
+	l_sp.window	= l_nthr + 2;
+
+	/* The cuts: about SEARCH$K_SPLITPIECE apart, each moved past the next terminator */
 	for ( unsigned i = 0; i < l_cnt; i++ )
 		{
 		l_cut	= (i == (l_cnt - 1)) ? l_end : (a_map + (a_len / l_cnt) * (i + 1));
@@ -1577,11 +1700,11 @@ uint64_t	l_base = 0;
 			l_cut	= l_nl ? (l_nl + 1) : l_end;
 			}
 
-		l_pcs [i].ctx		= a_ctx;
-		l_pcs [i].fspec		= a_fspec;
-		l_pcs [i].beg		= l_beg;
-		l_pcs [i].end		= l_cut;
-		l_pcs [i].needcnt	= a_needcnt;
+		l_sp.pcs [i].ctx	= l_tmpl;
+		l_sp.pcs [i].fspec	= a_fspec;
+		l_sp.pcs [i].beg	= l_beg;
+		l_sp.pcs [i].end	= l_cut;
+		l_sp.pcs [i].needcnt	= a_needcnt;
 
 		l_beg	= l_cut;
 		}
@@ -1590,46 +1713,78 @@ uint64_t	l_base = 0;
 	if ( a_needcnt )
 		{
 		for ( unsigned i = 0; i < l_cnt; i++ )
-			l_pcs [i].count	= 1;
+			l_sp.pcs [i].count	= 1;
 
-		s_srch$runpieces(l_cnt, l_pcs);
+		l_made	= s_srch$splitstart(&l_sp, l_nthr, l_tids);
+
+		for ( unsigned i = 0; i < l_made; i++ )
+			pthread_join(l_tids [i], NULL);
 
 		for ( unsigned i = 0; i < l_cnt; i++ )
 			{
-			l_pcs [i].count	= 0;
-			l_pcs [i].base	= l_base;
-			l_base		+= l_pcs [i].records;
+			l_sp.pcs [i].count	= 0;
+			l_sp.pcs [i].base	= l_base;
+			l_base			+= l_sp.pcs [i].records;
+			l_sp.done [i]		= 0;
 			}
+
+		l_sp.next	= 0;
 		}
 
-	s_srch$runpieces(l_cnt, l_pcs);
+	/* The second pass: searched by the threads, displayed here in order as they come */
+	l_sp.paced	= 1;
+	l_made		= s_srch$splitstart(&l_sp, l_nthr, l_tids);
 
-	__atomic_add_fetch(&s_pieces, (int) l_cnt, __ATOMIC_ACQ_REL);
-
-	/* The display: the heading, if anything matched, then the pieces in their order */
 	*a_matched	= 0;
 	*a_records	= 0;
 
 	for ( unsigned i = 0; i < l_cnt; i++ )
-		*a_matched	+= l_pcs [i].matched;
-
-	if ( *a_matched )
-		s_srch$heading(a_ctx, a_fspec, a_tim);
-
-	for ( unsigned i = 0; i < l_cnt; i++ )
 		{
-		if ( l_pcs [i].memlen )
-			srch$put_raw(a_ctx->out, (unsigned) l_pcs [i].memlen, l_pcs [i].mem);
+		SEARCH$PIECE *	l_pc = &l_sp.pcs [i];
 
-		free(l_pcs [i].mem);
+		pthread_mutex_lock(&l_sp.lock);
 
-		a_ctx->stat.recsread	+= l_pcs [i].stat.recsread;
-		a_ctx->stat.recsmatched	+= l_pcs [i].stat.recsmatched;
-		a_ctx->stat.chars	+= l_pcs [i].stat.chars;
-		a_ctx->stat.lines	+= l_pcs [i].stat.lines;
+		while ( !l_sp.done [i] )
+			pthread_cond_wait(&l_sp.cond, &l_sp.lock);
 
-		*a_records	+= l_pcs [i].stat.recsread;
+		pthread_mutex_unlock(&l_sp.lock);
+
+		if ( l_pc->matched && !l_heading )
+			{
+			l_heading	= 1;
+			s_srch$heading(a_ctx, a_fspec, a_tim);
+			}
+
+		if ( l_pc->memlen )
+			srch$put_raw(a_ctx->out, (unsigned) l_pc->memlen, l_pc->mem);
+
+		free(l_pc->mem);
+		l_pc->mem	= NULL;
+
+		*a_matched		+= l_pc->matched;
+		*a_records		+= l_pc->stat.recsread;
+
+		a_ctx->stat.recsread	+= l_pc->stat.recsread;
+		a_ctx->stat.recsmatched	+= l_pc->stat.recsmatched;
+		a_ctx->stat.chars	+= l_pc->stat.chars;
+		a_ctx->stat.lines	+= l_pc->stat.lines;
+
+		pthread_mutex_lock(&l_sp.lock);
+		l_sp.shown	= i + 1;
+		pthread_cond_broadcast(&l_sp.cond);
+		pthread_mutex_unlock(&l_sp.lock);
 		}
+
+	for ( unsigned i = 0; i < l_made; i++ )
+		pthread_join(l_tids [i], NULL);
+
+	__atomic_add_fetch(&s_pieces, (int) l_nthr, __ATOMIC_ACQ_REL);
+
+	pthread_cond_destroy(&l_sp.cond);
+	pthread_mutex_destroy(&l_sp.lock);
+	free(l_sp.done);
+	free(l_sp.pcs);
+	free(l_tmpl);
 
 	return	STS$K_SUCCESS;
 }
