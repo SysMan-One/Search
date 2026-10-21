@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHUTL"
-#define	__IDENT__	"X01-10"
-#define	__REV__		"1.10.0"
+#define	__IDENT__	"X01-11"
+#define	__REV__		"1.11.0"
 
 /*
 **++
@@ -31,6 +31,9 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-11		21-OCT-2026	RRL
+**		SEARCH$_TRUNCATED and SEARCH$_REOPENED, for /CONTINUE.
 **
 **	X01-10		 2-OCT-2026	RRL
 **		A context gathering into the heap offers what it holds to its
@@ -130,7 +133,9 @@ static	EMSG_RECORD	s_msgtab [] = {
 	$SRCHREC(SEARCH$_NOTOPIC,	"NOTOPIC, sorry, no documentation on !AZ"),
 	$SRCHREC(SEARCH$_LONGRECU,	"LONGREC, !AZ, a record has been truncated to !UL bytes"),
 	$SRCHREC(SEARCH$_SEARCHING,	"SEARCHING, for !AZ!AZ, the case is !AZ"),
-	$SRCHREC(SEARCH$_SELECTING,	"SELECTING, in !AZ!AZ")
+	$SRCHREC(SEARCH$_SELECTING,	"SELECTING, in !AZ!AZ"),
+	$SRCHREC(SEARCH$_TRUNCATED,	"TRUNCATED, !AZ has been cut short, it is read from its beginning again"),
+	$SRCHREC(SEARCH$_REOPENED,	"REOPENED, !AZ is another file now, it is read from its beginning")
 	};
 
 static	EMSG_RECORD_DESC	s_msgdsc = {

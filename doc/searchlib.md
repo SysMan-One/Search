@@ -434,6 +434,44 @@ it cannot be opened, a record is too long - is signalled as it
 happens, so two diagnostics may come in an order other than that of
 the walk.
 
+## /CONTINUE -- follow a file as it grows
+
+```
+/CONTINUE        look at the file again every second
+/CONTINUE=n      look at the file again every n seconds, 1 to 3600
+```
+
+Use it to watch a log. The last file the command selects is
+searched as usual, and then SEARCH does not stop at its end. It
+waits, looks at the file again, and searches the new records that
+have been added to it. It goes on like this until you press Ctrl-C.
+
+```
+$ search /var/log/syslog error /continue
+$ search '/var/log/app/*.log' timeout,refused /continue=5 /numbers
+```
+
+Only ONE file is followed: the last one selected. If the
+specification selects several files, the others are searched
+first, in the usual way, and the last one is followed.
+
+Some details:
+
+- A record is shown only when it is complete. If a program has
+  written half a line, SEARCH waits for the rest of it.
+- If the file becomes shorter (somebody cut it, for example with
+  `> file`), SEARCH says %SEARCH-I-TRUNCATED and reads it again from
+  the beginning.
+- If the file is renamed and a new file with the same name appears
+  (log rotation), SEARCH first reads the rest of the old file, then
+  says %SEARCH-I-REOPENED and reads the new file from the beginning.
+- After a new start the numbers of the records start from 1 again,
+  and the name of the file is shown again before its first match.
+- What has been found is written out before every wait, so you see
+  it at once, also with /OUTPUT or in a pipe.
+- Ctrl-C ends the run in a normal way: /STATISTICS is reported and
+  the completion code is the usual one -- 0 if something matched.
+
 ## /HELP -- display the description
 
 Displays the description of the utility -- this very library -- and
@@ -614,6 +652,8 @@ StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 %SEARCH-W-TOOMANY       a list is longer than the utility accepts
 %SEARCH-E-NOTOPIC       /HELP names a topic the library has not
 %SEARCH-I-BINMATCH      a binary file matches (output, /BINARY=NOTE)
+%SEARCH-I-TRUNCATED     /CONTINUE: the file has become shorter
+%SEARCH-I-REOPENED      /CONTINUE: another file has taken its name
 ```
 
 A diagnostic is signalled by the message subsystem of the STARLET

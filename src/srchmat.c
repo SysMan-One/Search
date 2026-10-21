@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHMAT"
-#define	__IDENT__	"X01-16"
-#define	__REV__		"1.16.0"
+#define	__IDENT__	"X01-17"
+#define	__REV__		"1.17.0"
 
 /*
 **++
@@ -43,6 +43,16 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-17		21-OCT-2026	RRL
+**		/CONTINUE: a file marked FOLLOW is not finished at its end -
+**		what has been displayed is flushed, the file is looked at
+**		again every /CONTINUE seconds and the records appended to it
+**		are searched as they come, until SIGINT (G_SRCH$INTERRUPT) or
+**		Q at the pager.  A record without its terminator waits for it.
+**		A file cut short is read again from its beginning, and one
+**		whose name another file has taken is left for that one, both
+**		announced (S_SRCH$FOLLOW).  Such a file is read, never mapped.
 **
 **	X01-16		 2-OCT-2026	RRL
 **		A split file is cut into pieces of about SEARCH$K_SPLITPIECE,
@@ -171,6 +181,7 @@
 #include	<unistd.h>
 #include	<sys/stat.h>
 #include	<sys/mman.h>
+#include	<time.h>
 #include	<pthread.h>
 #include	<wctype.h>
 
@@ -188,6 +199,12 @@ typedef	struct	srch_ring_t
 			max;			/* Capacity of the buffer		*/
 	char *		buf;			/* The record itself			*/
 } SEARCH$RING;
+
+/*
+**  The interrupt of a file followed by /CONTINUE: set by the handler of
+**  SIGINT that SEARCH.C installs for it, looked at by S_SRCH$FOLLOW.
+*/
+volatile sig_atomic_t	g_srch$interrupt = 0;
 
 
 /*
@@ -996,7 +1013,8 @@ unsigned	l_rest, l_len;
 		*/
 		if ( a_rab->eof )
 			{
-			if ( !l_rest )
+			/* A file that is followed may yet receive the rest of the record */
+			if ( !l_rest || a_rab->follow )
 				return	STS$K_WARN;
 
 			*a_rec		= a_rab->buf + a_rab->pos;
@@ -1794,8 +1812,119 @@ uint64_t	l_base = 0;
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
+**	/CONTINUE: the file followed has been read to its end.  What has
+**	been displayed is flushed - the end of this file may never come -
+**	the routine sleeps /CONTINUE seconds and looks at the file again:
+**
+**	    - it is shorter than what has been read of it: it has been cut
+**	      short (a log truncated in place), and is read again from its
+**	      beginning;
+**	    - its name is another file's now (a log rotated by renaming): the
+**	      old one has been read to its end, so the new one is opened and
+**	      read from its beginning; while the old one is still growing it
+**	      is read on;
+**	    - otherwise whatever has been appended is read on.
+**
+**	A name that has vanished - rotated, not yet created again - leaves
+**	the old file followed until it appears.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_ctx		The search context
+**	a_rab		The record stream of the file
+**	a_fspec		The specification of the file, ASCIZ
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	G_SRCH$INTERRUPT, read; the output context, flushed; the stream
+**	may be given a new descriptor.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- the stream may be read on;
+**	STS$K_INFO	- it has been started anew, the record numbers and
+**			  whatever the caller keeps per file begin again;
+**	STS$K_WARN	- the follow is over: SIGINT, or Q at the pager;
+**	STS$K_ERROR	- the file cannot be looked at, signalled.
+**--
+*/
+static	int	s_srch$follow	(
+		SEARCH$CTX *	a_ctx,
+		SEARCH$RAB *	a_rab,
+	const	char *		a_fspec
+			)
+{
+struct stat	l_fst, l_nst;
+struct timespec	l_ts = { .tv_sec = (time_t) a_ctx->contint, .tv_nsec = 0 };
+off_t		l_off;
+int		l_fd;
+
+	srch$flush(a_ctx->out);
+
+	if ( a_ctx->out->quit || g_srch$interrupt )
+		return	STS$K_WARN;
+
+	/* SIGINT cuts the sleep short - the handler is installed without SA_RESTART */
+	nanosleep(&l_ts, NULL);
+
+	if ( g_srch$interrupt )
+		return	STS$K_WARN;
+
+	if ( fstat(a_rab->fd, &l_fst) || (0 > (l_off = lseek(a_rab->fd, 0, SEEK_CUR))) )
+		return	$SRCHMSG(SEARCH$_READERR, a_fspec, errno, strerror(errno));
+
+	l_fd	= -1;
+
+	if ( S_ISREG(l_fst.st_mode) && (l_fst.st_size < l_off) )
+		{
+		$SRCHMSG(SEARCH$_TRUNCATED, a_fspec);
+
+		if ( 0 > lseek(a_rab->fd, 0, SEEK_SET) )
+			return	$SRCHMSG(SEARCH$_READERR, a_fspec, errno, strerror(errno));
+		}
+	/* Rotated: only once the old file has nothing more to give */
+	else if ( (l_fst.st_size == l_off) && !stat(a_fspec, &l_nst)
+		&& ((l_nst.st_ino != l_fst.st_ino) || (l_nst.st_dev != l_fst.st_dev)) )
+		{
+		/* Not to be opened yet - created, but not readable: the next look tries again */
+		if ( 0 > (l_fd = open(a_fspec, O_RDONLY)) )
+			{
+			a_rab->eof	= 0;
+
+			return	STS$K_SUCCESS;
+			}
+
+		$SRCHMSG(SEARCH$_REOPENED, a_fspec);
+
+		close(a_rab->fd);
+		a_rab->fd	= l_fd;
+		}
+	else	{
+		a_rab->eof	= 0;
+
+		return	STS$K_SUCCESS;
+		}
+
+	/*
+	**  Started anew: whatever is buffered belongs to the old contents.
+	**  FILLS moves on, so that the prefilter does not take the region it
+	**  has examined for one of the new contents.
+	*/
+	a_rab->len	= a_rab->pos = 0;
+	a_rab->eof	= a_rab->skip = 0;
+	a_rab->recnum	= 0;
+	a_rab->fills++;
+
+	return	STS$K_INFO;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
 **	Search one file and display every record that satisfies the match,
-**	together with the window of records asked for by /WINDOW.
+**	together with the window of records asked for by /WINDOW.  A file
+**	marked FOLLOW by /CONTINUE is not finished at its end: the records
+**	appended to it are searched as they come - see S_SRCH$FOLLOW.
 **
 **  FORMAL PARAMETERS:
 **
@@ -1829,7 +1958,7 @@ unsigned	l_reclen = 0, l_slot = 0, l_pending = 0, l_ringcnt = 0;
 const char *	l_cleanend = NULL;
 uint64_t	l_seen = 0;
 int		l_status, l_fd, l_heading = 0, l_longrec = 0;
-int		l_prefilt, l_needcnt, l_binary = 0;
+int		l_prefilt, l_needcnt, l_binary = 0, l_atend = 0;
 unsigned	l_markmax = 0;
 
 	/* The reader has answered Q at the pager - nothing more is to be displayed */
@@ -1935,7 +2064,11 @@ unsigned	l_markmax = 0;
 		**  the copying the mapping was to spare.  A walk of a large
 		**  tree is made of exactly such files.
 		*/
-		if ( S_ISREG(l_st.st_mode) && (l_st.st_size >= SEARCH$K_MAPMIN) && ((uint64_t) l_st.st_size <= UINT32_MAX) )
+		/*
+		**  A file followed by /CONTINUE is read: a mapping is of the
+		**  size the file had when it was made.
+		*/
+		if ( !a_ctx->follow && S_ISREG(l_st.st_mode) && (l_st.st_size >= SEARCH$K_MAPMIN) && ((uint64_t) l_st.st_size <= UINT32_MAX) )
 			{
 			void *	l_map = mmap(NULL, (size_t) l_st.st_size, PROT_READ, MAP_PRIVATE, l_fd, 0);
 
@@ -1984,6 +2117,9 @@ unsigned	l_markmax = 0;
 			}
 		}
 
+	/* /CONTINUE, and not a binary file that is to be left alone */
+	l_rab->follow	= a_ctx->follow && !(l_binary && (a_ctx->binary == SEARCH$K_BIN_SKIP));
+
 	/*
 	**  A large mapped file under /THREADS is searched in pieces by several
 	**  threads at once - only where the records are looked at one by one
@@ -2002,6 +2138,33 @@ unsigned	l_markmax = 0;
 
 	for ( ;; )
 		{
+		/*
+		**  /CONTINUE: the end of the file has been met.  The file is
+		**  waited on; started anew, it is a new file to the display as
+		**  well - announced again, with no window carried over.  Once
+		**  the follow is over, a record left without its terminator is
+		**  delivered as the last one, and the file ends as any other.
+		*/
+		if ( l_atend )
+			{
+			l_atend		= 0;
+			l_status	= s_srch$follow(a_ctx, l_rab, a_fspec);
+
+			if ( l_status == STS$K_INFO )
+				{
+				l_heading	= l_longrec = 0;
+				l_lastput	= 0;
+				l_pending	= l_ringcnt = l_slot = 0;
+				l_cleanend	= NULL;
+
+				/* The heading of the new contents shows their own time stamp */
+				if ( !fstat(l_rab->fd, &l_st) )
+					l_tim	= (fao_time_t) ((a_ctx->timsrc == SEARCH$K_TIME_CREATED) ? l_st.st_ctime : l_st.st_mtime);
+				}
+			else if ( !(1 & l_status) )
+				l_rab->follow	= 0;
+			}
+
 		/*
 		**  The prefilter, applied to the region that lies ahead rather
 		**  than to the record in hand: a region that carries none of
@@ -2040,6 +2203,11 @@ unsigned	l_markmax = 0;
 					{
 					if ( l_status == STS$K_ERROR )
 						$SRCHMSG(SEARCH$_READERR, a_fspec, errno, strerror(errno));
+					else if ( l_rab->follow )
+						{
+						l_atend	= 1;
+						continue;
+						}
 
 					break;
 					}
@@ -2084,7 +2252,15 @@ unsigned	l_markmax = 0;
 		l_status	= s_srch$getrec(l_rab, &l_reclen, &l_rec);
 
 		if ( l_status == STS$K_WARN )
+			{
+			if ( l_rab->follow )
+				{
+				l_atend	= 1;
+				continue;
+				}
+
 			break;
+			}
 
 		if ( !(1 & l_status) )
 			{
@@ -2232,10 +2408,12 @@ unsigned	l_markmax = 0;
 	else if ( l_rab->grown )
 		free(l_rab->buf);
 
+	/* Not L_FD: under /CONTINUE the stream may have opened the file again - see S_SRCH$FOLLOW */
+	close(l_rab->fd);
+
 	free(l_ring);
 	free(l_mark);
 	free(l_rab);
-	close(l_fd);
 
 	if ( a_ctx->out->quit )
 		return	STS$K_FATAL;

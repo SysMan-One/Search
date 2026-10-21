@@ -240,6 +240,20 @@ and
 .B /PAGE
 run the walk in a single thread.
 .TP
+.BR /CONTINUE [\fB=\fIn\fR]
+Follow the last file the command selects, as
+.B tail \-f
+does: when its end is reached, look at it again every
+.I n
+seconds (default 1, at most 3600) and search the records appended to it,
+until Ctrl-C.  A record is displayed only when its terminator has come.  A
+file that becomes shorter is read again from its beginning
+.RB ( %SEARCH\-I\-TRUNCATED );
+a file whose name another file has taken is read to its end and the new one
+is then read from its beginning
+.RB ( %SEARCH\-I\-REOPENED ).
+Ctrl-C ends the run as usual: the statistics, the completion code.
+.TP
 .BI /HELP " [topic]"
 Display the description of the utility -- the help library of the
 product -- and stop.  The words that follow name a topic within it:

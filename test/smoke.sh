@@ -21,6 +21,11 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		21-OCT-2026	RRL	X-15 : /CONTINUE: the last file of two is followed -
+#					records appended, one written in two
+#					parts, the file cut short; ^C ends the
+#					run with 0; /CONTINUE=0 is refused.
+#
 #		 2-OCT-2026	RRL	X-14 : A file specification that selects no file
 #					completes with 2, even beside one that
 #					matched.
@@ -633,6 +638,44 @@ if [ "$L_RC1$L_RC2" = "22" ]
 fi
 
 rm -f here.txt
+
+#
+#	/CONTINUE: the last file selected is followed past its end - a record
+#	is displayed once its terminator has come, a file cut short is read
+#	again from its beginning, ^C ends the run as usual
+#
+printf 'one alpha\n' > fol1.txt
+printf 'two alpha\n' > fol2.txt
+
+$SEARCH 'fol*.txt' alpha /CONTINUE=1 /NUMBERS /NOHEADING /THREADS=1 > fol.out 2> fol.err &
+L_PID=$!
+sleep 1.5;	printf 'three alpha\nfour al' >> fol2.txt
+sleep 1.5;	printf 'pha\n' >> fol2.txt
+sleep 1.5;	: > fol2.txt; printf 'five alpha\n' >> fol2.txt
+sleep 1.5;	kill -INT $L_PID
+wait $L_PID;	L_RC=$?
+
+if [ "`awk '{ printf "%s%s ", $1, $2 }' fol.out`" = "1one 1two 2three 3four 1five " ]
+	then ok "/CONTINUE searches the records appended to the last file"
+	else ko "/CONTINUE searches the records appended to the last file"
+fi
+
+if grep -q 'SEARCH-I-TRUNCATED' fol.err
+	then ok "/CONTINUE reads a file cut short from its beginning again"
+	else ko "/CONTINUE reads a file cut short from its beginning again"
+fi
+
+if [ "$L_RC" = "0" ]
+	then ok "^C ends /CONTINUE with the completion code of the run"
+	else ko "^C ends /CONTINUE with the completion code of the run ($L_RC)"
+fi
+
+if $SEARCH fol1.txt alpha /CONTINUE=0 > /dev/null 2>&1
+	then ko "/CONTINUE=0 is refused"
+	else ok "/CONTINUE=0 is refused"
+fi
+
+rm -f fol1.txt fol2.txt fol.out fol.err
 
 echo "%SEARCH-I-SMOKE, $CHECK check(s), $FAILED failure(s)"
 

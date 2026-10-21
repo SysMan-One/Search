@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-31"
-#define	__REV__		"1.31.0"
+#define	__IDENT__	"X01-32"
+#define	__REV__		"1.32.0"
 
 /*
 **++
@@ -50,6 +50,10 @@
 **					one line a record, for a tool to read
 **		    /THREADS[=n]	search n files at once, the display that
 **					of a single thread; default the processors
+**		    /CONTINUE[=n]	the last file selected is followed past
+**					its end: looked at again every n seconds
+**					(default 1), the records appended to it
+**					searched as they come, until ^C
 **		    /HELP		display the syntax
 **
 **		The first word that is not a qualifier is the list of the
@@ -113,6 +117,15 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-32		21-OCT-2026	RRL
+**		"добавим ключ /continue[=секунды]": the last file the command
+**		selects is held back by the walk (S_SEARCH$HOLDFILE), searched
+**		after every other one has been displayed, and followed past its
+**		end - every /CONTINUE seconds the records appended to it are
+**		searched, a file cut short or rotated is read anew (SRCHMAT
+**		X01-17).  ^C ends the follow, and the run ends as usual - the
+**		statistics, the completion code.
 **
 **	X01-31		 2-OCT-2026	RRL
 **		"делай 3-5": a file specification that selects no file is
@@ -265,6 +278,7 @@
 #include	<unistd.h>
 #include	<locale.h>
 #include	<langinfo.h>
+#include	<signal.h>
 
 #include	"srchdef.h"
 
@@ -292,6 +306,7 @@ enum	{
 	SEARCH$K_QUAL_BINARY,
 	SEARCH$K_QUAL_FORMAT,
 	SEARCH$K_QUAL_THREADS,
+	SEARCH$K_QUAL_CONTINUE,
 	SEARCH$K_QUAL_HELP,
 
 	SEARCH$K_QUAL_MAX
@@ -368,6 +383,7 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("BINARY")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_binkwd },
 	{ .name = {$ASCINI("FORMAT")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_fmtkwd },
 	{ .name = {$ASCINI("THREADS")},		.type = CLI$K_NUM,	.pn = CLI$K_QUAL },
+	{ .name = {$ASCINI("CONTINUE")},	.type = CLI$K_NUM,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("HELP")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = { .len = 0 } }
 	};
@@ -411,6 +427,8 @@ static	const char	s_usage [] = {
 	"                        spec:number:record, one line each, for tools\n"
 	"    /THREADS[=n]        search n files at once (default: the processors,\n"
 	"                        at most 16); the display is that of one thread\n"
+	"    /CONTINUE[=n]       follow the last file: every n seconds (default 1)\n"
+	"                        search what has been appended to it, until ^C\n"
 	"    /HELP               display this text\n"
 	"\n"
 	"A search string is a plain substring; a file specification is expanded\n"
@@ -554,6 +572,99 @@ static	int	s_search$onefile	(
 			)
 {
 	return	srch$file((SEARCH$CTX *) a_arg, a_fspec);
+}
+
+
+/*
+**  /CONTINUE: the file selected last is held back from the action routine
+**  of the run until the next one is selected - when the walk is over, the
+**  one still held is the one to be followed.
+*/
+typedef	struct	srch_hold_t
+{
+	int		(*rtn) (const char *a_fspec, void *a_arg);
+						/* The action routine of the run		*/
+	void *		arg;			/* Its argument					*/
+	char *		fspec;			/* The file held back, heap; NULL - none	*/
+} SEARCH$HOLD;
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	The action routine of the file selection under /CONTINUE: hand the
+**	file held back so far to the action routine of the run, and hold
+**	this one back instead.  The order of the files is the order of the
+**	walk all the same.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_fspec		The specification of the file, ASCIZ
+**	a_arg		The hold, SEARCH$HOLD
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	Whatever the action routine returned for the file held back before;
+**	STS$K_SUCCESS where there was none.
+**--
+*/
+static	int	s_search$holdfile	(
+	const	char *		a_fspec,
+		void *		a_arg
+			)
+{
+SEARCH$HOLD *	l_hold = (SEARCH$HOLD *) a_arg;
+char *		l_new;
+int		l_status = STS$K_SUCCESS;
+
+	/* No room to hold it: it is searched at once, and the one held before stays held */
+	if ( !(l_new = strdup(a_fspec)) )
+		{
+		$SRCHMSG(SEARCH$_NOMEM, (unsigned) (strlen(a_fspec) + 1), errno, strerror(errno));
+
+		return	l_hold->rtn(a_fspec, l_hold->arg);
+		}
+
+	if ( l_hold->fspec )
+		{
+		l_status	= l_hold->rtn(l_hold->fspec, l_hold->arg);
+		free(l_hold->fspec);
+		}
+
+	l_hold->fspec	= l_new;
+
+	return	l_status;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	The handler of SIGINT while a file is followed by /CONTINUE: the
+**	follow is over, the run ends as usual.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_sig		The signal, SIGINT
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	G_SRCH$INTERRUPT, set.
+**
+**  RETURN VALUE:
+**	None.
+**--
+*/
+static	void	s_search$sigint	(
+		int		a_sig
+			)
+{
+	(void) a_sig;
+
+	g_srch$interrupt	= 1;
 }
 
 
@@ -807,6 +918,22 @@ int		l_wincnt = 0;
 
 			if ( !a_ctx->threads || (a_ctx->threads > SEARCH$K_MAXTHREADS) )
 				return	$SRCHMSG(SEARCH$_IVQUAL, l_str, "THREADS");
+			}
+		}
+
+	/* ... /CONTINUE, the seconds between two looks at the file followed ... */
+	if ( 1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_CONTINUE], NULL) )
+		{
+		a_ctx->contint	= SEARCH$K_DEFCONT;
+
+		if ( 1 & __cli$get_value(a_clictx, &s_quals[SEARCH$K_QUAL_CONTINUE], &l_val) )
+			{
+			__util$asc2str(&l_val, l_str);
+
+			a_ctx->contint	= (unsigned) strtoul(l_str, NULL, 0);
+
+			if ( !a_ctx->contint || (a_ctx->contint > SEARCH$K_MAXCONT) )
+				return	$SRCHMSG(SEARCH$_IVQUAL, l_str, "CONTINUE");
 			}
 		}
 
@@ -1161,6 +1288,7 @@ CLI_CTX *	l_clictx = NULL;
 SEARCH$CTX	l_ctx = {0};
 SEARCH$SEL	l_sel = {0};
 SEARCH$OUT	l_out;
+SEARCH$HOLD	l_hold = {0};
 char *		l_argv [1 + 64], *l_words [SEARCH$K_MAXSPEC + SEARCH$K_MAXSTR];
 char *		l_elem [SEARCH$K_MAXSTR];
 char		l_outspec [SEARCH$K_SZ_PATH] = {0};
@@ -1431,10 +1559,14 @@ int		l_status, l_fd = STDOUT_FILENO;
 	if ( (l_ctx.threads > 1) && !(1 & srch$pool_init(&l_ctx, l_ctx.threads)) )
 		l_ctx.threads	= 1;
 
+	l_hold.rtn	= (l_ctx.threads > 1) ? srch$pool_file : s_search$onefile;
+	l_hold.arg	= &l_ctx;
+
 	for ( unsigned i = 0; i < l_elemcnt; i++ )
 		{
-		l_status	= srch$forfiles(l_elem [i], &l_sel,
-					(l_ctx.threads > 1) ? srch$pool_file : s_search$onefile, &l_ctx);
+		l_status	= l_ctx.contint
+				? srch$forfiles(l_elem [i], &l_sel, s_search$holdfile, &l_hold)
+				: srch$forfiles(l_elem [i], &l_sel, l_hold.rtn, &l_ctx);
 
 		/* A specification that selected no file: a warning, as on OpenVMS, and completion code 2, as with GREP */
 		if ( l_status == STS$K_WARN )
@@ -1451,6 +1583,28 @@ int		l_status, l_fd = STDOUT_FILENO;
 	/* The files still queued are displayed, in their turn, before anything is reported */
 	if ( l_ctx.threads > 1 )
 		srch$pool_drain();
+
+	/*
+	**  /CONTINUE: the file held back is the last one of the walk, and is
+	**  searched now that every other one has been displayed - by this
+	**  thread, followed past its end until ^C.  SA_RESTART is not given,
+	**  so that the signal cuts the sleep between two looks short.
+	*/
+	if ( l_hold.fspec )
+		{
+		struct sigaction	l_sa = { .sa_handler = s_search$sigint };
+
+		sigemptyset(&l_sa.sa_mask);
+
+		if ( sigaction(SIGINT, &l_sa, NULL) )
+			$LOG(STS$K_WARN, "sigaction(SIGINT), errno=%d (%s)", errno, strerror(errno));
+
+		l_ctx.follow	= 1;
+		srch$file(&l_ctx, l_hold.fspec);
+		l_ctx.follow	= 0;
+
+		free(l_hold.fspec);
+		}
 
 	srch$msec(&l_end);
 	l_ctx.stat.msec	= (l_end > l_beg) ? (l_end - l_beg) : 0;

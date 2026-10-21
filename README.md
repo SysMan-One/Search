@@ -40,6 +40,7 @@ it against the shell:
 | `/RECURSIVE` | descend into the subdirectories -- the analogue of `[...]` |
 | `/FORMAT=option` | `VMS` (default): headings and records; `GREP`: `spec:number:record`, one line each, for a tool |
 | `/THREADS=n` | search n files at once (default: the processors, at most 16), and a file of 32 MB or more in pieces; the display is that of one thread, byte for byte |
+| `/CONTINUE[=n]` | follow the last file selected, as `tail -f`: every n seconds (default 1) search what has been appended to it, until Ctrl-C; a truncated or rotated file is read anew |
 | `/BINARY=option` | a binary file (a NUL in its first 32 KB): `NOTE` that it matches (default), `SKIP` it, or search it as `TEXT` |
 | `/HELP [topic]` | display the description -- the help library of the product |
 

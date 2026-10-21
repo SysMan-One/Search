@@ -55,6 +55,12 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-21		21-OCT-2026	RRL
+**		/CONTINUE[=n]: CONTINT and FOLLOW of the search context,
+**		SEARCH$K_DEFCONT, SEARCH$K_MAXCONT; SEARCH$_TRUNCATED and
+**		SEARCH$_REOPENED - the file followed has been cut short, or
+**		another file has taken its name.
+**
 **	X01-20		 2-OCT-2026	RRL
 **		SRCH$FAIL.  SPILL and SPILLARG of an output context, and
 **		SEARCH$K_SPILL: the gathered output of a file is put out while
@@ -169,11 +175,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-20"
+#define	__IDENT__	"X01-21"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.20.0"
+#define	__REV__		"1.21.0"
 #endif
 
 #ifndef	__FAC__
@@ -184,6 +190,7 @@
 #include	<stddef.h>
 #include	<wchar.h>
 #include	<sys/types.h>
+#include	<signal.h>
 
 #include	"utility_routines.h"
 #include	"starlet.h"
@@ -229,6 +236,8 @@ enum	{
 	SEARCH$K_MSG_LONGRECU,			/* Record truncated, its number unknown	*/
 	SEARCH$K_MSG_SEARCHING,			/* What is looked for, and how		*/
 	SEARCH$K_MSG_SELECTING,			/* Where it is looked for		*/
+	SEARCH$K_MSG_TRUNCATED,			/* The file followed has been cut short	*/
+	SEARCH$K_MSG_REOPENED,			/* Another file has taken its name	*/
 
 	SEARCH$K_MSG_MAX			/* End-Of-List				*/
 	};
@@ -255,6 +264,8 @@ enum	{
 #define	SEARCH$_LONGRECU	$SRCHSTS(SEARCH$K_MSG_LONGRECU,	STS$K_WARN)
 #define	SEARCH$_SEARCHING	$SRCHSTS(SEARCH$K_MSG_SEARCHING,STS$K_INFO)
 #define	SEARCH$_SELECTING	$SRCHSTS(SEARCH$K_MSG_SELECTING,STS$K_INFO)
+#define	SEARCH$_TRUNCATED	$SRCHSTS(SEARCH$K_MSG_TRUNCATED,STS$K_INFO)
+#define	SEARCH$_REOPENED	$SRCHSTS(SEARCH$K_MSG_REOPENED,	STS$K_INFO)
 
 /*
 **  Sizes and limits of the subsystem.
@@ -294,6 +305,8 @@ enum	{
 						/* small - see S_SRCH$SPLIT			*/
 
 #define	SEARCH$K_DEFWIN		1		/* /WINDOW given without a value		*/
+#define	SEARCH$K_DEFCONT	1		/* /CONTINUE given without a value, seconds	*/
+#define	SEARCH$K_MAXCONT	3600		/* Ceiling of /CONTINUE, seconds		*/
 #define	SEARCH$K_DEFROWS	24		/* Height of the page, no terminal to ask	*/
 #define	SEARCH$K_DEFCOLS	80		/* Width of the page, no terminal to ask	*/
 #define	SEARCH$K_MINROWS	5		/* A page shorter than this is not paged	*/
@@ -488,6 +501,9 @@ typedef	struct	srch_ctx_t
 	unsigned	winbef,			/* /WINDOW: records displayed before a match	*/
 			winaft;			/* /WINDOW: records displayed after a match	*/
 
+	unsigned	contint;		/* /CONTINUE: seconds between two looks, 0 - no	*/
+	int		follow;			/* This file is followed past its end		*/
+
 	SEARCH$STAT	stat;			/* The counters of /STATISTICS			*/
 } SEARCH$CTX;
 
@@ -501,6 +517,8 @@ typedef	struct	srch_rab_t
 	int		fd;			/* Descriptor of the file being read		*/
 	int		eof;			/* READ(2) has reported the end of the file	*/
 	int		skip;			/* The tail of an over-long record is dropped	*/
+	int		follow;			/* /CONTINUE: the end of the file is not final,	*/
+						/* a record without its terminator not whole	*/
 
 	int		mapped;			/* BUF is a mapping of the file, not OWN	*/
 	int		grown;			/* BUF is a heap area grown past OWN		*/
@@ -593,6 +611,8 @@ int	srch$help	(int a_wordcnt, char **a_words, int a_page);
 */
 int	srch$addstr	(SEARCH$CTX *a_ctx, const char *a_str);
 int	srch$file	(SEARCH$CTX *a_ctx, const char *a_fspec);
+
+extern	volatile sig_atomic_t	g_srch$interrupt;	/* Set by the SIGINT of a file followed by /CONTINUE	*/
 
 /*
 **  SRCHTHR.C - the pool of threads of /THREADS: the files the walk picks
