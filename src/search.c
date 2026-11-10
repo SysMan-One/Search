@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-32"
-#define	__REV__		"1.32.0"
+#define	__IDENT__	"X01-33"
+#define	__REV__		"1.33.0"
 
 /*
 **++
@@ -42,8 +42,6 @@
 **		    /CREATED		... to the time of the last change
 **					of the inode - the closest analogue
 **					Linux has to a creation time
-**		    /RECURSIVE		descend into the subdirectories, the
-**					analogue of the [...] of OpenVMS
 **		    /BINARY=option	a binary file: NOTE that it matches
 **					(default), SKIP it, or search it as TEXT
 **		    /FORMAT=option	VMS (default), or GREP: spec:number:record
@@ -72,16 +70,21 @@
 **		OpenVMS.  A file specification, in contrast, IS expanded
 **		by the utility ('*', '%', '?'), so quote it against the
 **		shell to have it expanded here - which is what /EXCLUDE
-**		and /RECURSIVE need to be of any use.
+**		and the "..." directory need to be of any use.
+**
+**		A directory "..." walks the tree below the one before it -
+**		the [...] of OpenVMS: '.../x*.com', './.../x*.com',
+**		'/usr/src/.../x*.c', 'src/...'.  The names of files are
+**		matched without regard to case, as on OpenVMS.
 **
 **		A lone "--" ends the qualifiers, so that a file or a
 **		string spelled like one can be asked for.
 **
 **		A word beginning with a slash is a qualifier only when it
-**		names one - /RECURSIVE does, /usr/src/x.c and /etc do not -
+**		names one - /EXACT does, /usr/src/x.c and /etc do not -
 **		since on this system a slash begins an absolute file
 **		specification as well.  A word beginning with a DOUBLE dash
-**		is always a qualifier - --RECURSIVE - and a word beginning
+**		is always a qualifier - --EXACT - and a word beginning
 **		with a single one is an ordinary value, so a file spelled
 **		-notes.txt needs no ceremony.  -h alone asks for /HELP.
 **
@@ -117,6 +120,14 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-33		10-NOV-2026	RRL
+**		"search ... ничего не искал, поиск был рекурсивным ... при
+**		указании явно одного файла - находил": the names of files are
+**		matched without regard to case, so '*.com' takes X.COM again;
+**		and "давай вместо ключа recur сделаем это указанием пути":
+**		a directory "..." walks the tree below it (SRCHFIL X01-06),
+**		and /RECURSIVE is gone - RRL: "убрать совсем".
 **
 **	X01-32		21-OCT-2026	RRL
 **		"добавим ключ /continue[=секунды]": the last file the command
@@ -302,7 +313,6 @@ enum	{
 	SEARCH$K_QUAL_BEFORE,
 	SEARCH$K_QUAL_MODIFIED,
 	SEARCH$K_QUAL_CREATED,
-	SEARCH$K_QUAL_RECURSIVE,
 	SEARCH$K_QUAL_BINARY,
 	SEARCH$K_QUAL_FORMAT,
 	SEARCH$K_QUAL_THREADS,
@@ -379,7 +389,6 @@ static	CLI_PQDESC	s_quals [] = {
 	{ .name = {$ASCINI("BEFORE")},		.type = CLI$K_QSTRING,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("MODIFIED")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
 	{ .name = {$ASCINI("CREATED")},		.type = CLI$K_OPT,	.pn = CLI$K_QUAL },
-	{ .name = {$ASCINI("RECURSIVE")},	.type = CLI$K_OPT,	.pn = CLI$K_QUAL,	.flag = CLI$M_NEGATABLE },
 	{ .name = {$ASCINI("BINARY")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_binkwd },
 	{ .name = {$ASCINI("FORMAT")},		.type = CLI$K_KWD,	.pn = CLI$K_QUAL,	.kwd = s_fmtkwd },
 	{ .name = {$ASCINI("THREADS")},		.type = CLI$K_NUM,	.pn = CLI$K_QUAL },
@@ -420,7 +429,6 @@ static	const char	s_usage [] = {
 	"    /SINCE=time         take the files not older than\n"
 	"    /BEFORE=time        take the files older than\n"
 	"    /MODIFIED /CREATED  which time stamp /SINCE and /BEFORE apply to\n"
-	"    /RECURSIVE          descend into the subdirectories\n"
 	"    /BINARY=option      a binary file: NOTE (default) that it matches,\n"
 	"                        SKIP it, or search it as TEXT\n"
 	"    /FORMAT=option      VMS (default): headings and records; GREP:\n"
@@ -433,6 +441,8 @@ static	const char	s_usage [] = {
 	"\n"
 	"A search string is a plain substring; a file specification is expanded\n"
 	"by the utility itself, so quote it against the shell: search '*.c' foo\n"
+	"A directory \"...\" walks the tree below: search '.../*.c' foo, or\n"
+	"'./.../*.com', '/usr/src/.../*.h'.  The case of file names is ignored.\n"
 	"A lone -- ends the qualifiers.\n"
 	"\n"
 	"The full description is a help library of the HELP subsystem:\n"
@@ -449,7 +459,7 @@ static	const char	s_usage [] = {
 **
 **	On OpenVMS the question does not arise: a slash begins a qualifier
 **	and nothing else.  Here it begins an absolute file specification
-**	too, so the word is looked up in the table: /RECURSIVE names a
+**	too, so the word is looked up in the table: /EXACT names a
 **	qualifier, /usr/src/x.c does not and is a file specification.  An
 **	abbreviation counts as a name - the CLI service accepts one, and so
 **	must this - and so does the negated form of a negatable qualifier.
@@ -864,9 +874,6 @@ int		l_wincnt = 0;
 	if ( 1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_STATISTICS], &l_state) )
 		a_ctx->statistics = !(l_state & CLI$M_NEGATED);
 
-	if ( 1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_RECURSIVE], &l_state) )
-		a_sel->recurse	= !(l_state & CLI$M_NEGATED);
-
 	/* ... /MODIFIED and /CREATED, which are the two faces of one option ... */
 	if ( (1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_MODIFIED], NULL))
 		&& (1 & __cli$present(a_clictx, &s_quals[SEARCH$K_QUAL_CREATED], NULL)) )
@@ -1136,7 +1143,7 @@ unsigned	l_itemlen = (unsigned) strlen(a_item);
 **
 **	    %SEARCH-I-SEARCHING, for "alpha", "beta" combined by AND, the
 **		case is ignored
-**	    %SEARCH-I-SELECTING, in *.c, /RECURSIVE, /EXCLUDE=(build/%*)
+**	    %SEARCH-I-SELECTING, in src/.../x.c, /EXCLUDE=(build/%*)
 **
 **	Reported under /LOG, beside the other accounts of what is being
 **	done.
@@ -1201,9 +1208,6 @@ char		l_how [SEARCH$K_SZ_STR] = {0};
 			break;
 
 	l_how [0]	= '\0';
-
-	if ( a_sel->recurse )
-		srch$strcpy((unsigned) sizeof(l_how), l_how, ", /RECURSIVE");
 
 	for ( unsigned i = 0; i < a_sel->exclcnt; i++ )
 		{

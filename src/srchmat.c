@@ -1970,7 +1970,7 @@ unsigned	l_markmax = 0;
 
 	/*
 	**  The read-ahead buffer and the record are far too large for the
-	**  stack of a routine that may be reached through a deep /RECURSIVE
+	**  stack of a routine that may be reached through a deep "..."
 	**  walk, so both live in the heap.
 	*/
 	if ( !(l_rab = calloc(1, sizeof(SEARCH$RAB))) )

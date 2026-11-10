@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHFIL"
-#define	__IDENT__	"X01-05"
-#define	__REV__		"1.5.0"
+#define	__IDENT__	"X01-06"
+#define	__REV__		"1.6.0"
 
 /*
 **++
@@ -10,7 +10,8 @@
 **  MODULE:	srchfil.c
 **
 **  ABSTRACT:	The file selection of the SEARCH utility: expansion of a
-**		file specification, the /RECURSIVE walk of a directory
+**		file specification, the walk of a directory tree below a
+**		"..." directory
 **		tree and the /EXCLUDE, /SINCE and /BEFORE filters.
 **
 **  DESCRIPTION: The utility expands a file specification itself rather
@@ -20,21 +21,22 @@
 **		    still has to be expanded, and the diagnostics of an
 **		    unmatched pattern are then ours, not the shell's;
 **
-**		  - /RECURSIVE plays the part of the [...] of an OpenVMS
-**		    directory specification, which no shell offers.
+**		  - a "..." directory plays the part of the [...] of an
+**		    OpenVMS directory specification, which no shell offers.
 **
 **		A specification is split at the last slash: what precedes
 **		it is a directory, what follows it is the pattern applied
 **		to the names within.  Wildcards in the directory part are
-**		NOT expanded - use /RECURSIVE from the top of the tree
+**		NOT expanded - walk the tree from its top with "..."
 **		instead.  A specification carrying no wildcard at all is
 **		taken literally: a file is searched as it is, a directory
 **		is searched as if the pattern "*" had been applied within it.
 **
 **		A name is matched against a pattern by UTIL$PATTERN_MATCH
-**		of the STARLET library; '?' is normalized to '%' when a
-**		pattern is taken in, since the library knows the OpenVMS
-**		spelling alone.
+**		of the STARLET library, both folded to upper case first:
+**		the case of a name is not significant, as on OpenVMS.  '?'
+**		is normalized to '%' when a pattern is taken in, since the
+**		library knows the OpenVMS spelling alone.
 **
 **		The walk sorts the names of every directory, so that the
 **		order of the output does not depend on the order READDIR
@@ -48,6 +50,14 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06		10-NOV-2026	RRL
+**		The names of files are matched without regard to case, by the
+**		pattern and by /EXCLUDE alike - '*.com' did not take X.COM in a
+**		walk of the tree, while X.COM named outright was searched.  A
+**		"..." directory (S_SRCH$ELLIPSIS) walks the tree below the one
+**		before it - '.../x*.com', 'src/...' - in place of /RECURSIVE,
+**		which is gone; a "..." before another directory is refused.
 **
 **	X01-05		 2-OCT-2026	RRL
 **		The walk no longer calls LSTAT on every entry of a directory:
@@ -81,6 +91,7 @@
 */
 
 #include	<stdlib.h>
+#include	<ctype.h>
 #include	<string.h>
 #include	<errno.h>
 #include	<dirent.h>
@@ -139,7 +150,29 @@ static	int	s_srch$wildmat	(
 	const	char *		a_str
 			)
 {
-	return	__util$pattern_match((char *) a_str, (char *) a_pat) ? STS$K_SUCCESS : STS$K_WARN;
+char	l_pat [SEARCH$K_SZ_PATH], l_str [SEARCH$K_SZ_PATH];
+size_t	l_patlen, l_strlen;
+
+	/*
+	**  The case of the letters is not significant, as on OpenVMS: '*.com'
+	**  takes X.COM, which a VMS file copied over by FTP is usually called.
+	**  The library matcher is case-sensitive, so both are folded to upper
+	**  case first.  A string too long for the buffers - it cannot be the
+	**  name of a file - is matched as it is.
+	*/
+	l_patlen	= strlen(a_pat);
+	l_strlen	= strlen(a_str);
+
+	if ( (l_patlen >= sizeof(l_pat)) || (l_strlen >= sizeof(l_str)) )
+		return	__util$pattern_match((char *) a_str, (char *) a_pat) ? STS$K_SUCCESS : STS$K_WARN;
+
+	for ( size_t i = 0; i <= l_patlen; i++ )
+		l_pat [i]	= (char) toupper((unsigned char) a_pat [i]);
+
+	for ( size_t i = 0; i <= l_strlen; i++ )
+		l_str [i]	= (char) toupper((unsigned char) a_str [i]);
+
+	return	__util$pattern_match(l_str, l_pat) ? STS$K_SUCCESS : STS$K_WARN;
 }
 
 
@@ -202,6 +235,101 @@ static	int	s_srch$iswild	(
 			return	STS$K_SUCCESS;
 
 	return	STS$K_WARN;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Find the "..." directory of a specification - the [...] of OpenVMS:
+**	the tree below the directory before it is walked, and the pattern
+**	after it is applied to the names of every directory of the tree.
+**
+**	    .../x*.com		the tree below the current directory
+**	    ./.../x*.com	the same
+**	    /usr/src/.../x*.c	the tree below /usr/src
+**	    src/...		every file of the tree below src
+**	    ...			every file of the tree below the current one
+**
+**	(The examples begin their patterns with "x" only to keep a slash and
+**	an asterisk apart in this comment.)
+**
+**	"..." must be a whole component of the path, and the last directory
+**	of it: "src/.../include/x*.h" is refused, a name such as "a...b" is
+**	not a "..." at all.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_spec		The specification, ASCIZ, normalized
+**	a_dirsz		Size of the buffer of the directory
+**	a_dir		Returns the directory the walk starts from, ASCIZ
+**	a_pat		Returns the pattern, a pointer into a_spec or "*"
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- a "..." is there, a_dir and a_pat are set;
+**	STS$K_WARN	- there is none, the specification is an ordinary one;
+**	STS$K_ERROR	- the "..." is not the last directory, or the
+**			  directory is too long; the condition has been signalled.
+**--
+*/
+static	int	s_srch$ellipsis	(
+	const	char *		a_spec,
+		unsigned	a_dirsz,
+		char *		a_dir,
+	const	char **		a_pat
+			)
+{
+const char *	l_ell = NULL, *l_rest;
+unsigned	l_dirlen;
+
+	if ( !strncmp(a_spec, "...", 3) && ((a_spec [3] == '/') || !a_spec [3]) )
+		{
+		l_ell		= a_spec;
+		l_dirlen	= 0;
+		}
+	else	{
+		for ( const char *l_ptr = strstr(a_spec, "/..."); l_ptr; l_ptr = strstr(l_ptr + 1, "/...") )
+			if ( (l_ptr [4] == '/') || !l_ptr [4] )
+				{
+				l_ell	= l_ptr + 1;
+				break;
+				}
+
+		if ( !l_ell )
+			return	STS$K_WARN;
+
+		/* "/.../x" - the tree below the root, which keeps its slash */
+		l_dirlen	= (unsigned) (l_ell - 1 - a_spec);
+		if ( !l_dirlen )
+			l_dirlen = 1;
+		}
+
+	l_rest	= l_ell + 3;				/* Past the "..."		*/
+
+	if ( *l_rest == '/' )
+		l_rest++;
+
+	/* "..." is the last directory: nothing past it may carry a slash */
+	if ( strchr(l_rest, '/') )
+		return	$SRCHMSG(SEARCH$_IVQUAL, a_spec, "P1");
+
+	if ( l_dirlen >= a_dirsz )
+		return	$SRCHMSG(SEARCH$_IVQUAL, a_spec, "P1");
+
+	if ( l_dirlen )
+		{
+		memcpy(a_dir, a_spec, l_dirlen);
+		a_dir [l_dirlen]	= '\0';
+		}
+	else	srch$strcpy(a_dirsz, a_dir, ".");
+
+	*a_pat	= *l_rest ? l_rest : "*";
+
+	return	STS$K_SUCCESS;
 }
 
 
@@ -480,7 +608,8 @@ unsigned	l_dirlen, l_namlen;
 **
 **	Walk one directory: hand every file whose name matches the pattern
 **	and which passes the filters over to the action routine and, when
-**	/RECURSIVE is in force, descend into the subdirectories.
+**	the specification has a "..." directory, descend into the
+**	subdirectories.
 **
 **  FORMAL PARAMETERS:
 **
@@ -689,7 +818,7 @@ int	srch$forfiles	(
 			)
 {
 struct stat	l_st = {0};
-const char *	l_slash, *l_pat;
+const char *	l_slash, *l_pat = NULL;
 char		l_dir [SEARCH$K_SZ_PATH], l_spec [SEARCH$K_SZ_PATH];
 char		l_name [SEARCH$K_SZ_PATH];
 unsigned	l_cnt = 0, l_dirlen;
@@ -703,6 +832,25 @@ int		l_status;
 
 	/* '?' is the '%' of OpenVMS, and the matcher knows the latter alone */
 	s_srch$normpat(l_spec);
+
+	/*
+	**  A "..." directory walks the tree below it, for this specification
+	**  alone: the rest of a list is not walked.
+	*/
+	if ( (l_status = s_srch$ellipsis(l_spec, sizeof(l_dir), l_dir, &l_pat)) != STS$K_WARN )
+		{
+		int	l_recurse;
+
+		if ( !(1 & l_status) )
+			return	l_status;
+
+		l_recurse	= a_sel->recurse;
+		a_sel->recurse	= 1;
+		l_status	= s_srch$walk(l_dir, l_pat, a_sel, 0, a_rtn, a_arg, &l_cnt);
+		a_sel->recurse	= l_recurse;
+
+		return	(1 & l_status) ? (l_cnt ? STS$K_SUCCESS : STS$K_WARN) : l_status;
+		}
 
 	/*
 	**  A literal specification: a directory stands for everything in it,
@@ -738,8 +886,8 @@ int		l_status;
 
 	/*
 	**  A pattern: everything up to the last slash is the directory - a
-	**  wildcard there is not expanded, /RECURSIVE is the way to walk a
-	**  tree - and everything past it is applied to the names within.
+	**  wildcard there is not expanded, "..." is the way to walk a tree -
+	**  and everything past it is applied to the names within.
 	*/
 	if ( (l_slash = strrchr(l_spec, '/')) )
 		{

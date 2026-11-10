@@ -23,7 +23,7 @@
 **		regular expressions - exactly as on OpenVMS.  A file
 **		specification, in contrast, IS expanded by the utility
 **		itself ('*', '%', '?'), so that a pattern survives being
-**		quoted against the shell and so that /RECURSIVE can play
+**		quoted against the shell and so that a "..." directory can play
 **		the part of the [...] of an OpenVMS directory spec.
 **
 **		The processing chain is
@@ -293,7 +293,7 @@ enum	{
 #define	SEARCH$K_MAXEXCL	16		/* Maximum number of the /EXCLUDE patterns	*/
 #define	SEARCH$K_MAXPRM		16		/* Maximum number of the FAO parameters		*/
 #define	SEARCH$K_MAXWIN		4096		/* Sanity ceiling for a /WINDOW half		*/
-#define	SEARCH$K_MAXDEPTH	32		/* Maximum nesting of the /RECURSIVE walk	*/
+#define	SEARCH$K_MAXDEPTH	32		/* Maximum nesting of the walk below "..."	*/
 #define	SEARCH$K_MAXTHREADS	64		/* Ceiling of /THREADS				*/
 #define	SEARCH$K_DEFTHREADS	16		/* Ceiling of the default, the processors	*/
 #define	SEARCH$K_INFLIGHT	8		/* Files queued or searched ahead, per thread	*/
@@ -461,7 +461,7 @@ typedef	struct	srch_stat_t
 */
 typedef	struct	srch_sel_t
 {
-	int		recurse;		/* /RECURSIVE: descend into the subdirectories	*/
+	int		recurse;		/* A "..." directory: descend into the subdirectories */
 	int		timsrc;			/* SEARCH$K_TIME_*, /MODIFIED or /CREATED	*/
 
 	int		hassince,		/* /SINCE has been given			*/
@@ -594,7 +594,7 @@ int	srch$msec	(uint64_t *a_msec);
 
 /*
 **  SRCHFIL.C - the file selection: expansion of a file specification, the
-**  /RECURSIVE tree walk and the /EXCLUDE, /SINCE, /BEFORE filters.
+**  tree walk below "..." and the /EXCLUDE, /SINCE, /BEFORE filters.
 */
 int	srch$forfiles	(const char *a_spec, SEARCH$SEL *a_sel,
 			int (*a_rtn) (const char *a_fspec, void *a_arg), void *a_arg);

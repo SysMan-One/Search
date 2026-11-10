@@ -8,7 +8,7 @@
 #	ABSTRACT:	Functional checks of the SEARCH utility: the match
 #			modes, the case, the window, the numbering, the
 #			heading, the expansion of a file specification,
-#			/RECURSIVE, /EXCLUDE, /SINCE, /OUTPUT and the
+#			the "..." directory, /EXCLUDE, /SINCE, /OUTPUT and the
 #			completion codes.
 #
 #	DESCRIPTION:	The script works in a temporary directory of its own
@@ -20,6 +20,15 @@
 #	CREATION DATE:	 1-AUG-2026
 #
 #	MODIFICATION HISTORY:
+#
+#		10-NOV-2026	RRL	X-16 : The "..." directory walks the tree below
+#					it (.../*.txt, ./.../*.txt, sub/...),
+#					a "..." before another directory is
+#					refused; the names of files are matched
+#					without regard to case, by the pattern
+#					and by /EXCLUDE alike (RRL: '*.com' did
+#					not take X.COM in a /RECURSIVE search);
+#					/RECURSIVE is gone and is refused.
 #
 #		21-OCT-2026	RRL	X-15 : /CONTINUE: the last file of two is followed -
 #					records appended, one written in two
@@ -206,19 +215,19 @@ if $SEARCH alpha.txt seven /NUMBERS /NOHEADING | grep -q '^ *7  seven'
 fi
 
 #
-#	The expansion of a file specification, the heading and /RECURSIVE
+#	The expansion of a file specification, the heading and "..."
 #
 if [ "`$SEARCH '*.txt' alpha /NOHEADING | wc -l`" = "3" ]
 	then ok "a wildcard specification is expanded by the utility"
 	else ko "a wildcard specification is expanded by the utility"
 fi
 
-if [ "`$SEARCH '*' alpha /RECURSIVE /NOHEADING | wc -l`" = "4" ]
-	then ok "/RECURSIVE descends into the subdirectories"
-	else ko "/RECURSIVE descends into the subdirectories"
+if [ "`$SEARCH '.../*' alpha /NOHEADING | wc -l`" = "4" ]
+	then ok "\"...\" descends into the subdirectories"
+	else ko "\"...\" descends into the subdirectories"
 fi
 
-if [ "`$SEARCH '*' alpha /RECURSIVE /EXCLUDE='*.lis' /HEADING | grep -c 'gamma.txt'`" = "1" ]
+if [ "`$SEARCH '.../*' alpha /EXCLUDE='*.lis' /HEADING | grep -c 'gamma.txt'`" = "1" ]
 	then ok "/HEADING announces the name of a file"
 	else ko "/HEADING announces the name of a file"
 fi
@@ -228,10 +237,68 @@ if $SEARCH alpha.txt alpha /HEADING | grep -q '^alpha\.txt  *[0-9][0-9]*-[A-Z][A
 	else ko "/HEADING carries the time stamp of the file"
 fi
 
-if [ "`$SEARCH '*' beta /RECURSIVE /EXCLUDE='*.lis' /NOHEADING | wc -l`" = "2" ]
+if [ "`$SEARCH '.../*' beta /EXCLUDE='*.lis' /NOHEADING | wc -l`" = "2" ]
 	then ok "/EXCLUDE drops the files matching a pattern"
 	else ko "/EXCLUDE drops the files matching a pattern"
 fi
+
+#
+#	The "..." directory - the [...] of OpenVMS
+#
+if [ "`$SEARCH '.../*.txt' alpha /NOHEADING | wc -l`" = "4" ]
+	then ok ".../*.txt walks the tree below the current directory"
+	else ko ".../*.txt walks the tree below the current directory"
+fi
+
+if [ "`$SEARCH './.../*.txt' alpha /NOHEADING | wc -l`" = "4" ]
+	then ok "./.../*.txt does the same"
+	else ko "./.../*.txt does the same"
+fi
+
+if [ "`$SEARCH 'sub/...' alpha /NOHEADING | wc -l`" = "1" ]
+	then ok "sub/... takes every file of the tree below sub"
+	else ko "sub/... takes every file of the tree below sub"
+fi
+
+if [ "`$SEARCH '.../*.txt,*.txt' alpha /NOHEADING | wc -l`" = "7" ]
+	then ok "a \"...\" walks its own specification only"
+	else ko "a \"...\" walks its own specification only"
+fi
+
+if [ "`$SEARCH '*.txt' alpha --RECURSIVE /NOHEADING 2>&1 | grep -c 'Unrecognized qualifier'`" = "1" ]
+	then ok "/RECURSIVE is gone: \"...\" walks a tree"
+	else ko "/RECURSIVE is gone: \"...\" walks a tree"
+fi
+
+if $SEARCH 'sub/.../x/*.txt' alpha /NOHEADING 2>&1 | grep -q 'IVQUAL'
+	then ok "a \"...\" before another directory is refused"
+	else ko "a \"...\" before another directory is refused"
+fi
+
+#
+#	The case of the letters of a file name is not significant: '*.com'
+#	takes X.COM, as on OpenVMS
+#
+mkdir case
+echo "alpha in upper case" > case/UP.TXT
+echo "alpha in mixed case" > case/Mixed.Txt
+
+if [ "`$SEARCH 'case/*.txt' alpha /NOHEADING | wc -l`" = "2" ]
+	then ok "a pattern takes a name in any case"
+	else ko "a pattern takes a name in any case"
+fi
+
+if [ "`$SEARCH '.../*.txt' alpha /EXCLUDE='UP.TXT' /NOHEADING | grep -c 'case'`" = "1" ]
+	then ok "/EXCLUDE takes a name in any case"
+	else ko "/EXCLUDE takes a name in any case"
+fi
+
+if [ "`$SEARCH '.../up.txt' alpha /NOHEADING | wc -l`" = "1" ]
+	then ok "a literal name below \"...\" is matched in any case"
+	else ko "a literal name below \"...\" is matched in any case"
+fi
+
+rm -rf case
 
 #
 #	The wildcards: '%' of OpenVMS and '?' of the shell mean the same
@@ -368,12 +435,12 @@ fi
 #	file specification, every later one a search string.  A misspelt
 #	qualifier therefore becomes a string that matches nothing, and it
 #	is the dash form that reports the misspelling as such.
-if [ "`$SEARCH alpha.txt alpha /RECURSVE /NOHEADING | wc -l`" = "3" ]
+if [ "`$SEARCH alpha.txt alpha /STATISTCS /NOHEADING | wc -l`" = "3" ]
 	then ok "a misspelt qualifier becomes a parameter"
 	else ko "a misspelt qualifier becomes a parameter"
 fi
 
-if $SEARCH alpha.txt alpha --RECURSVE 2>&1 | grep -q 'Unrecognized qualifier'
+if $SEARCH alpha.txt alpha --STATISTCS 2>&1 | grep -q 'Unrecognized qualifier'
 	then ok "the long form of a misspelt qualifier is reported as one"
 	else ko "the long form of a misspelt qualifier is reported as one"
 fi
@@ -403,8 +470,8 @@ if $SEARCH alpha.txt alpha,beta /MATCH=AND /EXACT /LOG 2>&1 >/dev/null \
 	else ko "/LOG reports the strings and how they combine"
 fi
 
-if $SEARCH '*' alpha /RECURSIVE /EXCLUDE='*.lis' /LOG 2>&1 >/dev/null \
-	| grep -q 'SELECTING, in \*, /RECURSIVE, /EXCLUDE=(\*\.lis)'
+if $SEARCH '.../*' alpha /EXCLUDE='*.lis' /LOG 2>&1 >/dev/null \
+	| grep -q 'SELECTING, in \.\.\./\*, /EXCLUDE=(\*\.lis)'
 	then ok "/LOG reports the files and what narrows them down"
 	else ko "/LOG reports the files and what narrows them down"
 fi
@@ -546,16 +613,16 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 ; do
 done
 echo "nothing here" > thr/c/none.txt
 
-$SEARCH 'thr/*.txt' alpha /RECURSIVE /NUMBERS /WINDOW=1 /THREADS=1 > thr1.out 2>&1
-$SEARCH 'thr/*.txt' alpha /RECURSIVE /NUMBERS /WINDOW=1 /THREADS=8 > thr8.out 2>&1
+$SEARCH 'thr/.../*.txt' alpha /NUMBERS /WINDOW=1 /THREADS=1 > thr1.out 2>&1
+$SEARCH 'thr/.../*.txt' alpha /NUMBERS /WINDOW=1 /THREADS=8 > thr8.out 2>&1
 
 if [ -s thr1.out ] && cmp -s thr1.out thr8.out
 	then ok "/THREADS=8 displays what a single thread does"
 	else ko "/THREADS=8 displays what a single thread does"
 fi
 
-$SEARCH 'thr/*.txt' alpha /RECURSIVE /FORMAT=GREP /THREADS=1 > thr1.out 2>&1
-$SEARCH 'thr/*.txt' alpha /RECURSIVE /FORMAT=GREP /THREADS=8 > thr8.out 2>&1
+$SEARCH 'thr/.../*.txt' alpha /FORMAT=GREP /THREADS=1 > thr1.out 2>&1
+$SEARCH 'thr/.../*.txt' alpha /FORMAT=GREP /THREADS=8 > thr8.out 2>&1
 
 if [ -s thr1.out ] && cmp -s thr1.out thr8.out
 	then ok "/THREADS=8 /FORMAT=GREP displays what a single thread does"

@@ -38,9 +38,9 @@ specification, in contrast,
 expanded by the utility itself, so quote it against the shell to have it
 expanded here, which is what
 .B /EXCLUDE
-and
-.B /RECURSIVE
-need to be of any use.
+and the
+.B ...
+directory need to be of any use.
 .PP
 The first word that is not a qualifier is the list of the file
 specifications; every word after it is a list of the search strings.  A
@@ -61,7 +61,7 @@ alone is the short alias of
 .PP
 A word beginning with a slash is taken for a qualifier only when it names
 one:
-.B /RECURSIVE
+.B /EXACT
 does,
 .I /usr/src/*.c
 and
@@ -159,7 +159,7 @@ been made to mean:
 .RS
 .nf
 %SEARCH\-I\-SEARCHING, for "alpha", "beta" combined by AND, ...
-%SEARCH\-I\-SELECTING, in *.c, /RECURSIVE, /EXCLUDE=(build/%*)
+%SEARCH\-I\-SELECTING, in .../*.c, /EXCLUDE=(build/%*)
 .fi
 .RE
 .TP
@@ -194,12 +194,6 @@ and
 apply to: the time of the last modification (the default), or the time of
 the last change of the inode \- the closest analogue Linux has to a
 creation time.  The two cannot be given together.
-.TP
-.B /RECURSIVE
-Descend into the subdirectories \- the analogue of the
-.B [...]
-of an OpenVMS directory specification.  A symbolic link is never followed,
-neither to a file nor to a directory.
 .TP
 .BI /BINARY= option
 What is done with a binary file, one that carries a NUL among its first
@@ -278,10 +272,36 @@ and
 .B ?
 match exactly one.  The wildcards apply to the name within a directory:
 the part of the specification up to the last slash is a directory and is
-not expanded \- walk a tree with
-.B /RECURSIVE
-instead.  A specification carrying no wildcard is taken literally: a
+not expanded.  The case of the letters of a name is not significant, as
+on OpenVMS:
+.I '*.com'
+takes
+.I X.COM
+and
+.I x.com
+alike, and so does a pattern of
+.BR /EXCLUDE .
+A specification carrying no wildcard is taken literally: a
 directory stands for everything in it, a file stands for itself.
+.PP
+A tree is walked with the directory
+.B ...
+\- the
+.B [...]
+of an OpenVMS directory specification: everything below the directory
+before it, the pattern after it applied at every level \-
+.IR '.../*.c' ,
+.IR './.../*.com' ,
+.IR '/usr/src/.../*.h' ,
+.IR 'src/...' .
+.B ...
+is a whole component of the path and the last directory of it;
+.I 'src/.../include/*.h'
+is refused.  It walks its own specification only.  A symbolic link is never
+followed, neither to a file nor to a directory.  Up to X01-32 a tree was
+walked by the qualifier
+.BR /RECURSIVE ;
+it is gone.
 .SH TIME
 A time value is read the way
 .B UTIL$BINTIM
@@ -331,14 +351,14 @@ string, the case being ignored.
 .B search '*.c' alpha,beta /MATCH=AND /NUMBERS
 The records that carry both strings, prefixed by their numbers.
 .TP
-.B search '*' STS$K_ /RECURSIVE /EXCLUDE=(build/%*,*.o)
+.B search '.../*' STS$K_ /EXCLUDE=(build/%*,*.o)
 The whole tree below the current directory, one directory and every object
 file left out.
 .TP
 .B search 'src/*.c' TODO "/WINDOW=(1,2)" /OUTPUT=todo.lis
 Every match with one record before and two after it, written to a file.
 .TP
-.B search '*.c' alpha /RECURSIVE /PAGE /HIGHLIGHT=REVERSE
+.B search '.../*.c' alpha /PAGE /HIGHLIGHT=REVERSE
 The whole tree, a page at a time, every occurrence in reverse video.
 .TP
 .B search \-\- notes.txt /EXACT

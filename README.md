@@ -37,7 +37,6 @@ it against the shell:
 | `/EXCLUDE=(pat,...)` | drop the files matching a pattern |
 | `/SINCE=time`, `/BEFORE=time` | take the files not older than / older than |
 | `/MODIFIED`, `/CREATED` | which time stamp the two above apply to |
-| `/RECURSIVE` | descend into the subdirectories -- the analogue of `[...]` |
 | `/FORMAT=option` | `VMS` (default): headings and records; `GREP`: `spec:number:record`, one line each, for a tool |
 | `/THREADS=n` | search n files at once (default: the processors, at most 16), and a file of 32 MB or more in pieces; the display is that of one thread, byte for byte |
 | `/CONTINUE[=n]` | follow the last file selected, as `tail -f`: every n seconds (default 1) search what has been appended to it, until Ctrl-C; a truncated or rotated file is read anew |
@@ -51,17 +50,17 @@ a file spelled `-notes.txt` is asked for as it stands -- and `-h` alone
 is the short alias of `/HELP`.
 
 A word beginning with a slash is a qualifier only when it *names* one --
-`/RECURSIVE` does, `/usr/src/*.c` does not -- because a slash begins an
+`/EXACT` does, `/usr/src/*.c` does not -- because a slash begins an
 absolute file specification here as well, so absolute specifications are
 written as they stand:
 
-    $ search '/usr/src/*.c' STS$K_ /RECURSIVE
+    $ search '/usr/src/.../*.c' STS$K_
     $ search /etc hostname
 
 A word that names no qualifier is a parameter -- the first one the file
-specification, every later one a search string -- so `/RECURSVE` quietly
+specification, every later one a search string -- so `/STATISTCS` quietly
 becomes a search string rather than a diagnostic.  Spell it in the long
-form, `--RECURSVE`, and a misspelling is reported as such.  A lone `--`
+form, `--STATISTCS`, and a misspelling is reported as such.  A lone `--`
 ends the qualifiers, so that a file or a string spelled like one can be
 asked for:
 
@@ -83,9 +82,24 @@ of its own goes in double quotes -- or, simpler, as a word of its own:
 since the matching itself is `__util$pattern_match()` of the STARLET
 library, which knows the OpenVMS spelling alone).  They apply to the name within a directory: the part of
 the specification up to the last slash is a directory and is not
-expanded.  Walk a tree with `/RECURSIVE` instead:
+expanded.  The case of the letters of a name is not significant, as on
+OpenVMS: `'*.com'` takes `X.COM` and `x.com` alike, and so does a
+pattern of `/EXCLUDE`.
 
-    $ search '*.c' STS$K_ /RECURSIVE /EXCLUDE=build/%*
+**A tree** is walked with the directory `...` -- the `[...]` of
+OpenVMS: everything below the directory before it, the pattern after it
+applied in every directory of the tree.
+
+    $ search '.../*.c' STS$K_ /EXCLUDE=build/%*    the tree below the current one
+    $ search './.../*.com' TCPIP                   the same
+    $ search '/usr/src/.../*.h' rte_mbuf           the tree below /usr/src
+    $ search 'src/...' TODO                        every file below src
+
+`...` is a whole component of the path and the last directory of it:
+`src/.../include/*.h` is refused, a name such as `a...b` is just a name.
+It walks its own specification only: in `'.../*.c,*.h'` the `*.h` are
+those of the current directory.  (Up to X01-32 a tree was walked by the
+qualifier `/RECURSIVE`; it is gone.)
 
 A pattern of `/EXCLUDE` that carries a slash is matched against the
 whole specification of a file, one that does not -- against its name
@@ -120,7 +134,7 @@ command in the same breath:
 
     %SEARCH-I-SELTIME, /SINCE=0-1:00 is 21-AUG-2026 10:52:20.00
     %SEARCH-I-SEARCHING, for "alpha", "beta" combined by AND, the case is ignored
-    %SEARCH-I-SELECTING, in *.c, /RECURSIVE, /EXCLUDE=(build/%*)
+    %SEARCH-I-SELECTING, in .../*.c, /EXCLUDE=(build/%*)
 
 Worth a look when a run finds nothing: it shows whether the quoting
 survived the shell and whether the defaults were the ones assumed.

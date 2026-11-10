@@ -37,7 +37,7 @@ spelled -notes.txt is asked for as it stands; -h alone is the short
 alias of /HELP.
 
 A word beginning with a slash is taken for a qualifier only when it
-names one -- /RECURSIVE does, /usr/src/*.c and /etc do not --
+names one -- /EXACT does, /usr/src/*.c and /etc do not --
 because on this system a slash begins an absolute file
 specification as well. A word that names no qualifier is a
 parameter: the first such word is the list of the file
@@ -71,7 +71,7 @@ A specification that carries no wildcard is taken literally: a
 directory stands for everything in it, a file stands for itself.
 
 An absolute specification is written as it stands -- /usr/src/*.c,
-/etc, /*.c with /RECURSIVE -- and is not mistaken for a qualifier;
+/etc, /usr/src/.../*.c -- and is not mistaken for a qualifier;
 see the description of the command for how the two are told apart.
 
 ### search-string
@@ -258,7 +258,7 @@ value of /SINCE or /BEFORE has been resolved to:
 ```
 %SEARCH-I-SELTIME, /SINCE=TODAY is 21-AUG-2026 00:00:00.00
 %SEARCH-I-SEARCHING, for "alpha", "beta" combined by AND, the case is ignored
-%SEARCH-I-SELECTING, in *.c, /RECURSIVE, /EXCLUDE=(build/%*)
+%SEARCH-I-SELECTING, in .../*.c, /EXCLUDE=(build/%*)
 ```
 
 That account is worth a look when a run finds nothing: a command
@@ -347,24 +347,6 @@ inode -- the closest analogue the system has to offer. That stamp
 moves when the permissions or the owner of a file change, not only
 when its contents do.
 
-## /RECURSIVE -- descend into the subdirectories
-
-The qualifier is negatable. /RECURSIVE walks the whole tree below
-every directory of a file specification, which is the analogue of
-the [...] of an OpenVMS directory specification:
-
-```
-$ search '*.c' STS$K_ /RECURSIVE
-```
-
-The pattern is applied to the name of a file at every level of the
-tree. A symbolic link is never followed, neither to a file nor to a
-directory: a link pointing at an ancestor would otherwise make the
-walk an endless one.
-
-Nesting deeper than 32 levels is not descended into, and is
-reported with %SEARCH-W-TOODEEP.
-
 ## /BINARY -- what is done with a binary file
 
 ```
@@ -397,7 +379,7 @@ specification of the file and the number of the record, in the
 form GREP -n uses, so that an editor or a script can read it:
 
 ```
-$ search '*.c' rte_mbuf /RECURSIVE /FORMAT=GREP
+$ search '.../*.c' rte_mbuf /FORMAT=GREP
 src/rx.c:118:    struct rte_mbuf *m = NULL;
 ```
 
@@ -514,16 +496,36 @@ shell:
 
 The wildcards apply to the name within a directory: the part of a
 specification up to the last slash is a directory and is not
-expanded. Walk a tree with /RECURSIVE instead:
+expanded. The case of the letters of a name is not significant, as
+on OpenVMS: '*.com' takes X.COM and x.com alike, and so does a
+pattern of /EXCLUDE.
+
+A tree is walked with the directory "..." -- the [...] of an
+OpenVMS directory specification: everything below the directory
+before it, the pattern after it applied at every level:
 
 ```
 $ search 'src/*.c' alpha            one directory
-$ search '*.c' alpha /RECURSIVE     the tree below the current one
+$ search '.../*.c' alpha            the tree below the current one
+$ search './.../*.com' alpha        the same
+$ search '/usr/src/.../*.h' alpha   the tree below /usr/src
+$ search 'src/...' alpha            every file of the tree below src
 ```
+
+"..." is a whole component of the path and the last directory of
+it: 'src/.../include/*.h' is refused with %SEARCH-E-IVQUAL, a name
+such as a...b is just a name. It walks its own specification only:
+in '.../*.c,*.h' the *.h are those of the current directory. Up to
+X01-32 a tree was walked by the qualifier /RECURSIVE; it is gone.
+
+A symbolic link is never followed, neither to a file nor to a
+directory: a link pointing at an ancestor would otherwise make the
+walk an endless one. Nesting deeper than 32 levels is not descended
+into, and is reported with %SEARCH-W-TOODEEP.
 
 Quoting matters. An unquoted pattern is expanded by the shell
 before the utility ever sees it, which usually works but defeats
-/EXCLUDE and /RECURSIVE, and turns a pattern that matches nothing
+/EXCLUDE and "...", and turns a pattern that matches nothing
 into a diagnostic of the shell rather than %SEARCH-W-NOFILES.
 
 Within a directory the names are read in the collating order of the
@@ -591,7 +593,7 @@ The records that carry both strings, prefixed by the number of the
 line.
 
 ```
-$ search '*' STS$K_ /RECURSIVE /EXCLUDE=(build/%*,*.o)
+$ search '.../*' STS$K_ /EXCLUDE=(build/%*,*.o)
 ```
 
 The whole tree below the current directory, one directory and every
@@ -612,7 +614,7 @@ Only the logs changed within the last hour, each of them reported
 as it is finished.
 
 ```
-$ search '*.c' alpha /RECURSIVE /PAGE /HIGHLIGHT=REVERSE
+$ search '.../*.c' alpha /PAGE /HIGHLIGHT=REVERSE
 ```
 
 The whole tree, a page at a time, with every occurrence of the
