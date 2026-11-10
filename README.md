@@ -276,6 +276,10 @@ and leaves the process through `write(2)`.
 `/REMAINING` of the OpenVMS original.  `/WILDCARD_MATCHING` has no
 meaning here: a search string is never a pattern.
 
+## License
+
+Apache License 2.0 - see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
 ## Author
 
 StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).

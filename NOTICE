@@ -1,0 +1,8 @@
+SEARCH - an OpenVMS-style record search utility for Linux
+Copyright 2026 Ruslan (The BadAss SysMan) Laishev
+
+Licensed under the Apache License, Version 2.0 - see LICENSE.
+
+This product is linked against the StarLet utility routines and, when the
+build finds it, the HELP subsystem, both by the same author and both under
+the Apache License 2.0.
