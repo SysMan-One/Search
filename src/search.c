@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-33"
-#define	__REV__		"1.33.0"
+#define	__IDENT__	"X01-33ECO1"
+#define	__REV__		"1.33.1"
 
 /*
 **++
@@ -17,7 +17,9 @@
 **
 **		    SEARCH file-spec[,...] search-string[,...] [/qualifiers]
 **
-**		    /EXACT		the case of the letters is significant
+**		    /EXACT		the case of the letters of the search
+**					strings is significant; file names are
+**					never affected
 **		    /MATCH=option	how the strings are combined:
 **					OR (default), AND, NAND, NOR
 **		    /WINDOW[=(n,m)]	display n records before and m after
@@ -75,7 +77,9 @@
 **		A directory "..." walks the tree below the one before it -
 **		the [...] of OpenVMS: '.../x*.com', './.../x*.com',
 **		'/usr/src/.../x*.c', 'src/...'.  The names of files are
-**		matched without regard to case, as on OpenVMS.
+**		matched without regard to case, as on OpenVMS - of the Latin
+**		(ASCII) letters only, and whatever /EXACT says: a pattern and a
+**		name spelled out in full alike.
 **
 **		A lone "--" ends the qualifiers, so that a file or a
 **		string spelled like one can be asked for.
@@ -87,6 +91,9 @@
 **		is always a qualifier - --EXACT - and a word beginning
 **		with a single one is an ordinary value, so a file spelled
 **		-notes.txt needs no ceremony.  -h alone asks for /HELP.
+**		/RECURSIVE, which is gone, is refused in any spelling it used
+**		to be accepted in (S_SEARCH$ISRECUR), so that a command of old
+**		is not taken for a search string in silence.
 **
 **  AUTHOR:	StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
 **
@@ -120,6 +127,17 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-33ECO1	11-NOV-2026	CLD
+**		/RECURSIVE, /REC, --RECURSIVE, /NORECURSIVE ... were taken for
+**		a search string (the slash form) or refused as an unknown
+**		qualifier (the dash form): S_SEARCH$ISRECUR catches every
+**		spelling of the qualifier that used to be accepted and signals
+**		SEARCH$_NORECURSE, completion code 2.  A file named in full is
+**		looked for without regard to case too (SRCHFIL X01-06ECO1).
+**		The /EXCLUDE patterns are folded to upper case once, here, not
+**		at every name.  /HELP: /EXACT concerns the search strings
+**		only, the case of file names is ignored for ASCII letters.
 **
 **	X01-33		10-NOV-2026	RRL
 **		"search ... ничего не искал, поиск был рекурсивным ... при
@@ -414,7 +432,8 @@ static	CLI_VERB	s_verbs [] = {
 static	const char	s_usage [] = {
 	"Usage: search file-spec[,...] search-string[,...] [/qualifiers]\n"
 	"\n"
-	"    /EXACT              the case of the letters is significant\n"
+	"    /EXACT              the case of the search strings is significant\n"
+	"                        (never of file names)\n"
 	"    /MATCH=option       OR (default), AND, NAND, NOR\n"
 	"    /WINDOW[=(n,m)]     display n records before and m after a match\n"
 	"    /[NO]PAGE           stop at the end of a page (a terminal only)\n"
@@ -442,13 +461,80 @@ static	const char	s_usage [] = {
 	"A search string is a plain substring; a file specification is expanded\n"
 	"by the utility itself, so quote it against the shell: search '*.c' foo\n"
 	"A directory \"...\" walks the tree below: search '.../*.c' foo, or\n"
-	"'./.../*.com', '/usr/src/.../*.h'.  The case of file names is ignored.\n"
+	"'./.../*.com', '/usr/src/.../*.h'.  The case of file names is ignored\n"
+	"(Latin letters only), whatever /EXACT says.\n"
 	"A lone -- ends the qualifiers.\n"
 	"\n"
 	"The full description is a help library of the HELP subsystem:\n"
 	"\n"
 	"    $ search /HELP           $ search /HELP window\n"
 	};
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Tell whether a word of the command is a spelling of /RECURSIVE,
+**	which is gone: a "..." directory of the file specification walks a
+**	tree now.  Without this the slash form would name no qualifier and
+**	become a parameter - a search string, the tree not walked, a
+**	completion code of success - and the dash form would be refused as
+**	an unknown qualifier, with no word on what stands in its place.
+**
+**	A spelling is whatever used to be accepted: /RECURSIVE or --RECURSIVE,
+**	a leading part of the name (no other qualifier begins with R, so
+**	/R was taken as well), the negated form /NORECURSIVE and its leading
+**	parts down to /NOR, a value after '=' or ':'.  A word carrying a
+**	second slash is a path, as for S_SEARCH$ISQUAL.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_word		The word, ASCIZ
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- the word spells /RECURSIVE;
+**	STS$K_WARN	- it does not.
+**--
+*/
+static	int	s_search$isrecur	(
+	const	char *		a_word
+			)
+{
+static	const char	s_rec [] = "RECURSIVE";
+const char *	l_name;
+char		l_ups [sizeof(s_rec) + 2] = {0};
+unsigned	l_len;
+
+	if ( (a_word [0] == '-') && (a_word [1] == '-') )
+		l_name	= a_word + 2;
+	else if ( a_word [0] == '/' )
+		l_name	= a_word + 1;
+	else	return	STS$K_WARN;
+
+	for ( l_len = 0; l_name [l_len] && (l_name [l_len] != '=') && (l_name [l_len] != ':'); l_len++ )
+		{
+		if ( l_name [l_len] == '/' )
+			return	STS$K_WARN;
+		}
+
+	/* Longer than NORECURSIVE - no spelling of it */
+	if ( !l_len || (l_len >= sizeof(l_ups)) )
+		return	STS$K_WARN;
+
+	srch$upcase(l_len, l_name, l_ups);
+
+	if ( (l_len < sizeof(s_rec)) && !strncmp(l_ups, s_rec, l_len) )
+		return	STS$K_SUCCESS;
+
+	if ( (l_len > 2) && !strncmp(l_ups, "NO", 2) && !strncmp(l_ups + 2, s_rec, l_len - 2) )
+		return	STS$K_SUCCESS;
+
+	return	STS$K_WARN;
+}
 
 
 /*
@@ -468,7 +554,9 @@ static	const char	s_usage [] = {
 **	asked for as readily as /EXACT is, and nothing but the table tells
 **	the two apart.  A misspelt qualifier therefore becomes a parameter
 **	rather than a diagnostic; the dash form, which is never anything
-**	but a qualifier, is the way to have the misspelling refused.
+**	but a qualifier, is the way to have the misspelling refused.  The
+**	one exception is /RECURSIVE, which is gone and is caught before
+**	this routine is asked, by S_SEARCH$ISRECUR.
 **
 **	The Unix spelling of a qualifier is the GNU long form, --NAME: that
 **	is what CLI_ROUTINES X.00-14 accepts, and a token spelled -NAME is
@@ -1366,6 +1454,14 @@ int		l_status, l_fd = STDOUT_FILENO;
 			continue;
 			}
 
+		/* /RECURSIVE is gone: said so, not taken for a parameter */
+		if ( 1 & s_search$isrecur(a_argv [i]) )
+			{
+			$SRCHMSG(SEARCH$_NORECURSE, a_argv [i]);
+
+			return	SEARCH$K_EXIT_ERROR;
+			}
+
 		if ( 1 & s_search$isqual(a_argv [i]) )
 			{
 			const char *l_p = a_argv[i] + ((a_argv[i][0] == '-') ? 2 : 1);
@@ -1533,14 +1629,22 @@ int		l_status, l_fd = STDOUT_FILENO;
 
 	/*
 	**  '?' is the '%' of OpenVMS, and the matcher of the library knows
-	**  the latter alone.  Done here rather than where the qualifier is
-	**  collected: the account above is to show the pattern as it was
-	**  given, not as the utility keeps it.
+	**  the latter alone; and the case of a file name is not significant,
+	**  so the pattern is folded to upper case once, here, rather than at
+	**  every name it is matched against.  Done here rather than where the
+	**  qualifier is collected: the account above is to show the pattern
+	**  as it was given, not as the utility keeps it.
 	*/
 	for ( unsigned i = 0; i < l_sel.exclcnt; i++ )
-		for ( char *l_p = l_sel.excl [i]; *l_p; l_p++ )
+		{
+		unsigned	l_len = 0;
+
+		for ( char *l_p = l_sel.excl [i]; *l_p; l_p++, l_len++ )
 			if ( *l_p == '?' )
 				*l_p	= '%';
+
+		srch$upcase(l_len, l_sel.excl [i], l_sel.excl [i]);
+		}
 
 	/*
 	**  The pool of /THREADS.  Without the qualifier the run takes as many

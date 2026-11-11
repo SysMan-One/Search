@@ -69,6 +69,11 @@ expanded by the utility; see the topic WILDCARDS.
 
 A specification that carries no wildcard is taken literally: a
 directory stands for everything in it, a file stands for itself.
+A name that is not there as it is spelled is looked for in its
+directory without regard to case: x.com finds X.COM. When several
+names match so -- x.com and X.COM side by side -- all of them are
+searched, as a wildcard would take them; when none does, the name is
+reported with %SEARCH-E-OPENIN.
 
 An absolute specification is written as it stands -- /usr/src/*.c,
 /etc, /usr/src/.../*.c -- and is not mistaken for a qualifier;
@@ -93,6 +98,10 @@ are three different strings.
 
 By default the case of the letters is ignored, Latin, Cyrillic or
 any other the locale knows.
+
+/EXACT concerns the search strings only, never the names of files:
+a file specification is matched without regard to case whether
+/EXACT is given or not (see the topic WILDCARDS).
 
 ## /MATCH -- combine several search strings
 
@@ -498,7 +507,10 @@ The wildcards apply to the name within a directory: the part of a
 specification up to the last slash is a directory and is not
 expanded. The case of the letters of a name is not significant, as
 on OpenVMS: '*.com' takes X.COM and x.com alike, and so does a
-pattern of /EXCLUDE.
+pattern of /EXCLUDE and a name written out in full. This holds for
+the Latin letters (ASCII) only: a letter of any other script in a
+file name is compared as it stands. /EXACT does not change any of
+it -- it concerns the search strings alone.
 
 A tree is walked with the directory "..." -- the \[...\] of an
 OpenVMS directory specification: everything below the directory
@@ -516,7 +528,9 @@ $ search 'src/...' alpha            every file of the tree below src
 it: 'src/.../include/*.h' is refused with %SEARCH-E-IVQUAL, a name
 such as a...b is just a name. It walks its own specification only:
 in '.../*.c,*.h' the *.h are those of the current directory. Up to
-X01-32 a tree was walked by the qualifier /RECURSIVE; it is gone.
+X01-32 a tree was walked by the qualifier /RECURSIVE; it is gone,
+and a command that still gives it -- /RECURSIVE, /REC, --RECURSIVE
+-- is refused with %SEARCH-E-NORECURSE.
 
 A symbolic link is never followed, neither to a file nor to a
 directory: a link pointing at an ancestor would otherwise make the
@@ -656,6 +670,7 @@ StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan).
 %SEARCH-I-BINMATCH      a binary file matches (output, /BINARY=NOTE)
 %SEARCH-I-TRUNCATED     /CONTINUE: the file has become shorter
 %SEARCH-I-REOPENED      /CONTINUE: another file has taken its name
+%SEARCH-E-NORECURSE     /RECURSIVE is gone: use a "..." directory
 ```
 
 A diagnostic is signalled by the message subsystem of the STARLET

@@ -12,6 +12,13 @@
 .\"
 .\"	MODIFICATION HISTORY:
 .\"
+.\"		11-NOV-2026	CLD	X-02 : /EXACT concerns the search strings,
+.\"					never the names of files; the case of a
+.\"					name is ignored for the ASCII letters
+.\"					only, a name written out in full as
+.\"					well; /RECURSIVE is refused with
+.\"					NORECURSE.
+.\"
 .\"		 1-AUG-2026	RRL	X-01 : Initial version.
 .\"
 .\"---
@@ -77,9 +84,14 @@ asked for.
 .SH QUALIFIERS
 .TP
 .B /EXACT
-The case of the letters is significant.  By default it is ignored, in any
-script the locale knows \- Cyrillic as well as Latin; the text is taken as
-UTF-8, under the user's locale if it is a UTF-8 one, C.UTF-8 otherwise.
+The case of the letters of the search strings is significant.  By default
+it is ignored, in any script the locale knows \- Cyrillic as well as Latin;
+the text is taken as UTF-8, under the user's locale if it is a UTF-8 one,
+C.UTF-8 otherwise.
+.B /EXACT
+concerns the search strings only, never the names of files: a file
+specification is matched without regard to case either way (see
+.BR WILDCARDS ).
 .TP
 .BI /MATCH= option
 How the search strings are combined within a record:
@@ -280,9 +292,22 @@ takes
 and
 .I x.com
 alike, and so does a pattern of
-.BR /EXCLUDE .
+.B /EXCLUDE
+and a name written out in full.  This holds for the Latin letters (ASCII)
+only: a letter of any other script in a file name is compared as it
+stands, and
+.B /EXACT
+changes none of it.
 A specification carrying no wildcard is taken literally: a
-directory stands for everything in it, a file stands for itself.
+directory stands for everything in it, a file stands for itself.  A name
+that is not there as it is spelled is looked for in its directory without
+regard to case \-
+.I x.com
+finds
+.I X.COM
+\- and when several names match so, all of them are searched, as a
+wildcard would take them; when none does, it is reported with
+.BR %SEARCH\-E\-OPENIN .
 .PP
 A tree is walked with the directory
 .B ...
@@ -301,7 +326,12 @@ is refused.  It walks its own specification only.  A symbolic link is never
 followed, neither to a file nor to a directory.  Up to X01-32 a tree was
 walked by the qualifier
 .BR /RECURSIVE ;
-it is gone.
+it is gone, and a command that still gives it \-
+.BR /RECURSIVE ,
+.BR /REC ,
+.B \-\-RECURSIVE
+\- is refused with
+.BR \%%SEARCH\-E\-NORECURSE .
 .SH TIME
 A time value is read the way
 .B UTIL$BINTIM

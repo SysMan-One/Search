@@ -27,6 +27,10 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		10-NOV-2026	CLD	X-06 : /RECURSIVE dropped from the list of the
+#					qualifiers a topic is looked for - it
+#					is gone, a "..." directory walks a tree.
+#
 #		 2-OCT-2026	RRL	X-05 : /THREADS added to the list of the
 #					qualifiers a topic is looked for.
 #

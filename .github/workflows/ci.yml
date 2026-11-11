@@ -21,6 +21,14 @@
 #
 #       MODIFICATION HISTORY:
 #
+#               11-NOV-2026     CLD     X01-33ECO1 : permissions: contents: read - the
+#                                       job reads the tree and nothing else, so the
+#                                       token of the runner is given no more.
+#
+#               11-NOV-2026     CLD     X01-33 : HELP is built with -DHELP_TESTS=OFF
+#                                       -DHELP_BUILD_SYSCACHE=OFF -DHELP_ALIAS=OFF -
+#                                       /var/cache/help is not writable by the runner.
+#
 #               10-NOV-2026     CLD     X01-33 : Initial revision.
 #
 #--
@@ -31,6 +39,9 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:

@@ -21,6 +21,16 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		11-NOV-2026	CLD	X-17 : /RECURSIVE, /REC, /NOREC, --RECURSIVE
+#					are refused with NORECURSE and the
+#					completion code 2 (the slash form was
+#					taken for a search string); a slash word
+#					with a second slash is a path still.  A
+#					file named in full is found in any case
+#					(x.com takes X.COM), both of x.com and
+#					X.COM are taken when both are there, a
+#					name in no case at all is OPENIN still.
+#
 #		10-NOV-2026	RRL	X-16 : The "..." directory walks the tree below
 #					it (.../*.txt, ./.../*.txt, sub/...),
 #					a "..." before another directory is
@@ -265,9 +275,24 @@ if [ "`$SEARCH '.../*.txt,*.txt' alpha /NOHEADING | wc -l`" = "7" ]
 	else ko "a \"...\" walks its own specification only"
 fi
 
-if [ "`$SEARCH '*.txt' alpha --RECURSIVE /NOHEADING 2>&1 | grep -c 'Unrecognized qualifier'`" = "1" ]
-	then ok "/RECURSIVE is gone: \"...\" walks a tree"
-	else ko "/RECURSIVE is gone: \"...\" walks a tree"
+#
+#	/RECURSIVE is gone: every spelling of it once accepted is refused with
+#	a word on "...", rather than taken for a search string
+#
+for L_Q in /RECURSIVE /REC /recu /NOREC --RECURSIVE --rec
+do
+	L_OUT=`$SEARCH '*.txt' alpha $L_Q /NOHEADING 2>&1`; L_RC=$?
+
+	if [ "$L_RC" = "2" ] && echo "$L_OUT" | grep -q 'NORECURSE.*\.\.\./\*\.c' \
+		&& ! echo "$L_OUT" | grep -q 'alpha'
+		then ok "$L_Q is refused: \"...\" walks a tree"
+		else ko "$L_Q is refused: \"...\" walks a tree (rc $L_RC)"
+	fi
+done
+
+if $SEARCH '*.txt' /rec/x.txt /NOHEADING 2>&1 | grep -q 'NORECURSE'
+	then ko "a slash word with a second slash is a parameter, not /RECURSIVE"
+	else ok "a slash word with a second slash is a parameter, not /RECURSIVE"
 fi
 
 if $SEARCH 'sub/.../x/*.txt' alpha /NOHEADING 2>&1 | grep -q 'IVQUAL'
@@ -297,6 +322,37 @@ if [ "`$SEARCH '.../up.txt' alpha /NOHEADING | wc -l`" = "1" ]
 	then ok "a literal name below \"...\" is matched in any case"
 	else ko "a literal name below \"...\" is matched in any case"
 fi
+
+if [ "`$SEARCH case/up.txt alpha /NOHEADING 2>&1`" = "alpha in upper case" ]
+	then ok "a file named in full is found in any case"
+	else ko "a file named in full is found in any case"
+fi
+
+if [ "`cd case && $SEARCH mixed.TXT alpha /NOHEADING 2>&1`" = "alpha in mixed case" ]
+	then ok "a file named in full is found in any case, in the current directory"
+	else ko "a file named in full is found in any case, in the current directory"
+fi
+
+echo "alpha in lower case" > case/up.txt
+
+if [ "`$SEARCH case/up.txt alpha /NOHEADING 2>&1`" = "alpha in lower case" ]
+	then ok "a file named in full that exists as spelled is taken alone"
+	else ko "a file named in full that exists as spelled is taken alone"
+fi
+
+if [ "`$SEARCH case/Up.Txt alpha /NOHEADING 2>&1 | wc -l`" = "2" ]
+	then ok "a file named in full takes every name that matches in any case"
+	else ko "a file named in full takes every name that matches in any case"
+fi
+
+$SEARCH case/nosuch.txt alpha /NOHEADING > /dev/null 2> case.err; L_RC=$?
+
+if [ "$L_RC" = "2" ] && grep -q 'OPENIN, error opening case/nosuch.txt' case.err
+	then ok "a file named in full that is there in no case is OPENIN"
+	else ko "a file named in full that is there in no case is OPENIN (rc $L_RC)"
+fi
+
+rm -f case.err
 
 rm -rf case
 

@@ -55,6 +55,17 @@
 **
 **  MODIFICATION HISTORY:
 **
+**	X01-22ECO1	11-NOV-2026	CLD
+**		SEARCH$_NORECURSE - /RECURSIVE, gone since X01-33 of the
+**		product, is refused with a word on the "..." directory
+**		that stands in its place, rather than taken for a parameter.
+**
+**	X01-22		10-NOV-2026	CLD
+**		Comments only: the tree walk is asked for by a "..." directory
+**		of a file specification, /RECURSIVE is gone - the abstract,
+**		SEARCH$K_MAXDEPTH, RECURSE of SEARCH$SEL and the heading of
+**		the SRCHFIL.C prototypes say so.
+**
 **	X01-21		21-OCT-2026	RRL
 **		/CONTINUE[=n]: CONTINT and FOLLOW of the search context,
 **		SEARCH$K_DEFCONT, SEARCH$K_MAXCONT; SEARCH$_TRUNCATED and
@@ -175,11 +186,11 @@
 #endif
 
 #ifndef	__IDENT__
-#define	__IDENT__	"X01-21"
+#define	__IDENT__	"X01-22ECO1"
 #endif
 
 #ifndef	__REV__
-#define	__REV__		"1.21.0"
+#define	__REV__		"1.22.1"
 #endif
 
 #ifndef	__FAC__
@@ -238,6 +249,7 @@ enum	{
 	SEARCH$K_MSG_SELECTING,			/* Where it is looked for		*/
 	SEARCH$K_MSG_TRUNCATED,			/* The file followed has been cut short	*/
 	SEARCH$K_MSG_REOPENED,			/* Another file has taken its name	*/
+	SEARCH$K_MSG_NORECURSE,			/* /RECURSIVE is gone, "..." instead	*/
 
 	SEARCH$K_MSG_MAX			/* End-Of-List				*/
 	};
@@ -266,6 +278,7 @@ enum	{
 #define	SEARCH$_SELECTING	$SRCHSTS(SEARCH$K_MSG_SELECTING,STS$K_INFO)
 #define	SEARCH$_TRUNCATED	$SRCHSTS(SEARCH$K_MSG_TRUNCATED,STS$K_INFO)
 #define	SEARCH$_REOPENED	$SRCHSTS(SEARCH$K_MSG_REOPENED,	STS$K_INFO)
+#define	SEARCH$_NORECURSE	$SRCHSTS(SEARCH$K_MSG_NORECURSE,STS$K_ERROR)
 
 /*
 **  Sizes and limits of the subsystem.

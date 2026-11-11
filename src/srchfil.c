@@ -1,6 +1,6 @@
 #define	__MODULE__	"SRCHFIL"
-#define	__IDENT__	"X01-06"
-#define	__REV__		"1.6.0"
+#define	__IDENT__	"X01-06ECO1"
+#define	__REV__		"1.6.1"
 
 /*
 **++
@@ -11,8 +11,7 @@
 **
 **  ABSTRACT:	The file selection of the SEARCH utility: expansion of a
 **		file specification, the walk of a directory tree below a
-**		"..." directory
-**		tree and the /EXCLUDE, /SINCE and /BEFORE filters.
+**		"..." directory and the /EXCLUDE, /SINCE and /BEFORE filters.
 **
 **  DESCRIPTION: The utility expands a file specification itself rather
 **		than leaving it to the shell.  Two reasons:
@@ -31,12 +30,17 @@
 **		instead.  A specification carrying no wildcard at all is
 **		taken literally: a file is searched as it is, a directory
 **		is searched as if the pattern "*" had been applied within it.
+**		A literal name that does not exist as it is spelled is looked
+**		for in its directory without regard to case, and every entry
+**		that matches so is taken - x.com finds X.COM.
 **
 **		A name is matched against a pattern by UTIL$PATTERN_MATCH
 **		of the STARLET library, both folded to upper case first:
-**		the case of a name is not significant, as on OpenVMS.  '?'
-**		is normalized to '%' when a pattern is taken in, since the
-**		library knows the OpenVMS spelling alone.
+**		the case of a name is not significant, as on OpenVMS - for
+**		the Latin (ASCII) letters, a byte above 0x7F is compared as
+**		it stands.  A pattern is folded once, when it is taken in,
+**		and so is '?' normalized to '%' then, since the library knows
+**		the OpenVMS spelling alone; the name is folded at every match.
 **
 **		The walk sorts the names of every directory, so that the
 **		order of the output does not depend on the order READDIR
@@ -50,6 +54,17 @@
 **  CREATION DATE:   1-AUG-2026
 **
 **  MODIFICATION HISTORY:
+**
+**	X01-06ECO1	11-NOV-2026	CLD
+**		A file named without a wildcard was still looked for in the
+**		case it was spelled in: x.com did not take X.COM, while x.co%
+**		and .../x.com did.  A literal name that does not exist is
+**		looked for in its directory without regard to case
+**		(S_SRCH$ANYCASE), every entry that matches taken, OPENIN kept
+**		where none does.  The pattern is folded to upper case once,
+**		when it is taken in (S_SRCH$FOLDPAT; the /EXCLUDE patterns in
+**		SEARCH.C), not by S_SRCH$WILDMAT at every name; the folding is
+**		SRCH$UPCASE, ASCII letters only.
 **
 **	X01-06		10-NOV-2026	RRL
 **		The names of files are matched without regard to case, by the
@@ -91,7 +106,6 @@
 */
 
 #include	<stdlib.h>
-#include	<ctype.h>
 #include	<string.h>
 #include	<errno.h>
 #include	<dirent.h>
@@ -132,9 +146,13 @@ typedef	struct	srch_dir_t
 **	not touch them.  The const is therefore cast away, which is the
 **	price of an interface that predates the qualifier.
 **
+**	The pattern comes folded to upper case already - S_SRCH$FOLDPAT,
+**	or the /EXCLUDE patterns in SEARCH.C - so only the name is folded
+**	here.
+**
 **  FORMAL PARAMETERS:
 **
-**	a_pat		The pattern, ASCIZ, normalized
+**	a_pat		The pattern, ASCIZ, normalized and upper case
 **	a_str		The name to be matched, ASCIZ
 **
 **  IMPLICIT INPUTS/OUTPUTS:
@@ -150,29 +168,24 @@ static	int	s_srch$wildmat	(
 	const	char *		a_str
 			)
 {
-char	l_pat [SEARCH$K_SZ_PATH], l_str [SEARCH$K_SZ_PATH];
-size_t	l_patlen, l_strlen;
+char	l_str [SEARCH$K_SZ_PATH];
+size_t	l_strlen;
 
 	/*
 	**  The case of the letters is not significant, as on OpenVMS: '*.com'
 	**  takes X.COM, which a VMS file copied over by FTP is usually called.
-	**  The library matcher is case-sensitive, so both are folded to upper
-	**  case first.  A string too long for the buffers - it cannot be the
-	**  name of a file - is matched as it is.
+	**  The library matcher is case-sensitive, so the name is folded to
+	**  upper case, as the pattern has been.  A string too long for the
+	**  buffer - it cannot be the name of a file - is matched as it is.
 	*/
-	l_patlen	= strlen(a_pat);
 	l_strlen	= strlen(a_str);
 
-	if ( (l_patlen >= sizeof(l_pat)) || (l_strlen >= sizeof(l_str)) )
+	if ( l_strlen >= sizeof(l_str) )
 		return	__util$pattern_match((char *) a_str, (char *) a_pat) ? STS$K_SUCCESS : STS$K_WARN;
 
-	for ( size_t i = 0; i <= l_patlen; i++ )
-		l_pat [i]	= (char) toupper((unsigned char) a_pat [i]);
+	srch$upcase((unsigned) l_strlen + 1, a_str, l_str);
 
-	for ( size_t i = 0; i <= l_strlen; i++ )
-		l_str [i]	= (char) toupper((unsigned char) a_str [i]);
-
-	return	__util$pattern_match(l_str, l_pat) ? STS$K_SUCCESS : STS$K_WARN;
+	return	__util$pattern_match(l_str, (char *) a_pat) ? STS$K_SUCCESS : STS$K_WARN;
 }
 
 
@@ -205,6 +218,38 @@ static	int	s_srch$normpat	(
 			*l_ptr	= '%';
 
 	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Fold the pattern of a specification to upper case in place - the
+**	part past the last slash, the directory before it being a path that
+**	is used as it stands.  Done once, when the pattern is taken in, so
+**	that S_SRCH$WILDMAT folds the names alone.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_spec		The specification, ASCIZ; its pattern modified in place
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	None.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS always.
+**--
+*/
+static	int	s_srch$foldpat	(
+		char *		a_spec
+			)
+{
+char *	l_pat = strrchr(a_spec, '/');
+
+	l_pat	= l_pat ? (l_pat + 1) : a_spec;
+
+	return	srch$upcase((unsigned) strlen(l_pat), l_pat, l_pat);
 }
 
 
@@ -782,15 +827,221 @@ int		l_status = STS$K_SUCCESS;
 **++
 **  FUNCTIONAL DESCRIPTION:
 **
+**	Hand over a file named without a wildcard, its status block at hand:
+**	a directory stands for everything in it, a file for itself.  A file
+**	still has to pass /EXCLUDE, /SINCE and /BEFORE, but it is never
+**	dropped for having an unexpected type, so that a named pipe or a
+**	device asked for by name is read.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_spec		The specification of the file, ASCIZ
+**	a_st		Its status block, STAT
+**	a_sel		The selection criteria
+**	a_rtn		The action routine, called per selected file
+**	a_arg		Opaque argument of the action routine
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	Reads the directory, calls the action routine.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- at least one file has been selected;
+**	STS$K_WARN	- none has: filtered out, or an empty directory;
+**	STS$K_FATAL	- the action routine has asked for the walk to stop;
+**	STS$K_ERROR	- a directory could not be read.
+**--
+*/
+static	int	s_srch$literal	(
+	const	char *		a_spec,
+	const	struct stat *	a_st,
+		SEARCH$SEL *	a_sel,
+		int		(*a_rtn) (const char *a_fspec, void *a_arg),
+		void *		a_arg
+			)
+{
+const char *	l_slash;
+char		l_name [SEARCH$K_SZ_PATH];
+unsigned	l_cnt = 0;
+int		l_status;
+
+	if ( S_ISDIR(a_st->st_mode) )
+		{
+		l_status	= s_srch$walk(a_spec, "*", a_sel, 0, a_rtn, a_arg, &l_cnt);
+
+		return	(1 & l_status) ? (l_cnt ? STS$K_SUCCESS : STS$K_WARN) : l_status;
+		}
+
+	/* The name of the file, for the sake of a slashless /EXCLUDE pattern */
+	l_slash	= strrchr(a_spec, '/');
+	srch$strcpy(sizeof(l_name), l_name, l_slash ? (l_slash + 1) : a_spec);
+
+	if ( 1 & s_srch$excluded(a_sel, a_spec, l_name) )
+		return	STS$K_WARN;
+
+	if ( !(1 & s_srch$intime(a_sel, a_st)) )
+		return	STS$K_WARN;
+
+	if ( STS$K_FATAL == a_rtn(a_spec, a_arg) )
+		return	STS$K_FATAL;
+
+	return	STS$K_SUCCESS;
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
+**	Look for a file named without a wildcard, and not found as it has
+**	been spelled, in its directory without regard to case - x.com takes
+**	X.COM, as the pattern x.co% does.  Every entry that matches is taken,
+**	in the order of their names: x.com and X.COM both, on a file system
+**	that holds the two, exactly as a wildcard would.  Each is handed over
+**	as a literal one, S_SRCH$LITERAL.
+**
+**	A directory that cannot be read selects nothing, so that the caller
+**	reports the name it has been given, not the directory.
+**
+**  FORMAL PARAMETERS:
+**
+**	a_spec		The specification, ASCIZ, no wildcard in it
+**	a_sel		The selection criteria
+**	a_rtn		The action routine, called per selected file
+**	a_arg		Opaque argument of the action routine
+**	a_found		Returns the number of the entries that matched
+**
+**  IMPLICIT INPUTS/OUTPUTS:
+**	Reads the directory, calls the action routine.
+**
+**  RETURN VALUE:
+**	STS$K_SUCCESS	- at least one file has been selected;
+**	STS$K_WARN	- none has: no entry matched (a_found is 0), or
+**			  every one has been filtered out;
+**	STS$K_FATAL	- the action routine has asked for the walk to stop;
+**	STS$K_ERROR	- a directory could not be read, out of memory; the
+**			  condition has been signalled.
+**--
+*/
+static	int	s_srch$anycase	(
+	const	char *		a_spec,
+		SEARCH$SEL *	a_sel,
+		int		(*a_rtn) (const char *a_fspec, void *a_arg),
+		void *		a_arg,
+		unsigned *	a_found
+			)
+{
+DIR *		l_dirp;
+struct dirent *	l_dp;
+struct stat	l_st = {0};
+SEARCH$DIR	l_names = {0};
+const char *	l_slash, *l_name;
+char		l_dir [SEARCH$K_SZ_PATH], l_pat [SEARCH$K_SZ_PATH], l_fspec [SEARCH$K_SZ_PATH];
+unsigned	l_dirlen;
+int		l_status = STS$K_SUCCESS, l_any = 0, l_err = 0;
+
+	*a_found	= 0;
+
+	if ( (l_slash = strrchr(a_spec, '/')) )
+		{
+		l_name		= l_slash + 1;
+		l_dirlen	= (unsigned) (l_slash - a_spec);
+
+		/* "/name" - the root, which keeps its slash */
+		if ( !l_dirlen )
+			l_dirlen = 1;
+
+		if ( l_dirlen >= sizeof(l_dir) )
+			return	STS$K_WARN;
+
+		memcpy(l_dir, a_spec, l_dirlen);
+		l_dir [l_dirlen]	= '\0';
+		}
+	else	{
+		l_name	= a_spec;
+		srch$strcpy(sizeof(l_dir), l_dir, ".");
+		}
+
+	/* "dir/" names no file: nothing to look for */
+	if ( !*l_name )
+		return	STS$K_WARN;
+
+	/* The name is the pattern, folded as every pattern is - it carries no wildcard */
+	srch$strcpy(sizeof(l_pat), l_pat, l_name);
+	s_srch$foldpat(l_pat);
+
+	if ( !(l_dirp = opendir(l_dir)) )
+		return	STS$K_WARN;
+
+	while ( (l_dp = readdir(l_dirp)) )
+		{
+		if ( !strcmp(l_dp->d_name, ".") || !strcmp(l_dp->d_name, "..") )
+			continue;
+
+		if ( !(1 & s_srch$wildmat(l_pat, l_dp->d_name)) )
+			continue;
+
+		if ( !(1 & (l_status = s_srch$dir_add(&l_names, l_dp->d_name, l_dp->d_type))) )
+			break;
+		}
+
+	closedir(l_dirp);
+
+	if ( !(1 & l_status) )
+		{
+		s_srch$dir_free(&l_names);
+
+		return	l_status;
+		}
+
+	if ( l_names.cnt > 1 )
+		qsort(l_names.name, l_names.cnt, sizeof(char *), s_srch$namecmp);
+
+	for ( unsigned i = 0; i < l_names.cnt; i++ )
+		{
+		if ( !(1 & s_srch$mkspec(l_dir, l_names.name [i] + 1, sizeof(l_fspec), l_fspec)) )
+			continue;
+
+		/* Gone since the directory was read */
+		if ( stat(l_fspec, &l_st) )
+			continue;
+
+		(*a_found)++;
+
+		l_status	= s_srch$literal(l_fspec, &l_st, a_sel, a_rtn, a_arg);
+
+		if ( l_status == STS$K_FATAL )
+			{
+			s_srch$dir_free(&l_names);
+
+			return	STS$K_FATAL;
+			}
+
+		if ( 1 & l_status )
+			l_any	= 1;
+		else if ( l_status != STS$K_WARN )
+			l_err	= l_status;
+		}
+
+	s_srch$dir_free(&l_names);
+
+	return	l_any ? STS$K_SUCCESS : (l_err ? l_err : STS$K_WARN);
+}
+
+
+/*
+**++
+**  FUNCTIONAL DESCRIPTION:
+**
 **	Expand one file specification and call the action routine for every
 **	file it selects.
 **
 **	The specification is split at the last slash into a directory and a
-**	pattern.  A specification carrying no wildcard is taken literally:
-**	a directory is searched as if the pattern "*" had been applied within it, a file
-**	is handed over as it is - it still has to pass /EXCLUDE, /SINCE and
-**	/BEFORE, but it is never silently dropped for having an unexpected
-**	type, so that a named pipe or a device asked for by name is read.
+**	pattern.  A specification carrying no wildcard is taken literally
+**	(S_SRCH$LITERAL): a directory is searched as if the pattern "*" had
+**	been applied within it, a file is handed over as it is.  One that
+**	does not exist as it is spelled is looked for without regard to
+**	case (S_SRCH$ANYCASE), and only when that finds nothing either is
+**	SEARCH$_OPENIN signalled.
 **
 **  FORMAL PARAMETERS:
 **
@@ -820,9 +1071,8 @@ int	srch$forfiles	(
 struct stat	l_st = {0};
 const char *	l_slash, *l_pat = NULL;
 char		l_dir [SEARCH$K_SZ_PATH], l_spec [SEARCH$K_SZ_PATH];
-char		l_name [SEARCH$K_SZ_PATH];
 unsigned	l_cnt = 0, l_dirlen;
-int		l_status;
+int		l_status, l_errno;
 
 	if ( !a_spec || !*a_spec )
 		return	STS$K_WARN;
@@ -844,6 +1094,9 @@ int		l_status;
 		if ( !(1 & l_status) )
 			return	l_status;
 
+		/* The pattern past the "..." - L_DIR has been copied out already */
+		s_srch$foldpat(l_spec);
+
 		l_recurse	= a_sel->recurse;
 		a_sel->recurse	= 1;
 		l_status	= s_srch$walk(l_dir, l_pat, a_sel, 0, a_rtn, a_arg, &l_cnt);
@@ -858,30 +1111,28 @@ int		l_status;
 	*/
 	if ( !(1 & s_srch$iswild(l_spec)) )
 		{
-		if ( stat(l_spec, &l_st) )
-			return	$SRCHMSG(SEARCH$_OPENIN, l_spec, errno, strerror(errno));
+		if ( !stat(l_spec, &l_st) )
+			return	s_srch$literal(l_spec, &l_st, a_sel, a_rtn, a_arg);
 
-		if ( S_ISDIR(l_st.st_mode) )
+		/*
+		**  Not there as it is spelled: x.com may be X.COM - the case of a
+		**  name is not significant, a pattern or not.  The errno of STAT
+		**  is kept, the look into the directory would overwrite it.
+		*/
+		l_errno	= errno;
+
+		if ( l_errno == ENOENT )
 			{
-			l_status	= s_srch$walk(l_spec, "*", a_sel, 0, a_rtn, a_arg, &l_cnt);
+			l_status	= s_srch$anycase(l_spec, a_sel, a_rtn, a_arg, &l_cnt);
 
-			return	(1 & l_status) ? (l_cnt ? STS$K_SUCCESS : STS$K_WARN) : l_status;
+			if ( l_cnt )
+				return	l_status;
+
+			if ( (l_status != STS$K_WARN) && !(1 & l_status) )
+				return	l_status;
 			}
 
-		/* The name of the file, for the sake of a slashless /EXCLUDE pattern */
-		l_slash	= strrchr(l_spec, '/');
-		srch$strcpy(sizeof(l_name), l_name, l_slash ? (l_slash + 1) : l_spec);
-
-		if ( 1 & s_srch$excluded(a_sel, l_spec, l_name) )
-			return	STS$K_WARN;
-
-		if ( !(1 & s_srch$intime(a_sel, &l_st)) )
-			return	STS$K_WARN;
-
-		if ( STS$K_FATAL == a_rtn(l_spec, a_arg) )
-			return	STS$K_FATAL;
-
-		return	STS$K_SUCCESS;
+		return	$SRCHMSG(SEARCH$_OPENIN, l_spec, l_errno, strerror(l_errno));
 		}
 
 	/*
@@ -909,6 +1160,9 @@ int		l_status;
 		srch$strcpy(sizeof(l_dir), l_dir, ".");
 		l_pat	= l_spec;
 		}
+
+	/* The pattern is folded once, here, not at every name it is matched against */
+	s_srch$foldpat(l_spec);
 
 	/* "dir/" - no pattern at all - means everything in the directory */
 	if ( !*l_pat )

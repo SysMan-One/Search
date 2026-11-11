@@ -26,7 +26,7 @@ it against the shell:
 
 | Qualifier | Meaning |
 |---|---|
-| `/EXACT` | the case of the letters is significant; ignored by default, in any script the locale knows (Cyrillic too) |
+| `/EXACT` | the case of the letters of the search strings is significant; ignored by default, in any script the locale knows (Cyrillic too).  File names are never affected: they are always matched without regard to case |
 | `/MATCH=option` | how the strings are combined: `OR` (default), `AND`, `NAND`, `NOR` |
 | `/WINDOW[=(n,m)]` | display `n` records before and `m` after a match; one value -- both sides; no value -- one on either side |
 | `/[NO]PAGE` | stop at the end of a page and wait; a terminal only, off by default |
@@ -86,7 +86,12 @@ library, which knows the OpenVMS spelling alone).  They apply to the name within
 the specification up to the last slash is a directory and is not
 expanded.  The case of the letters of a name is not significant, as on
 OpenVMS: `'*.com'` takes `X.COM` and `x.com` alike, and so does a
-pattern of `/EXCLUDE`.
+pattern of `/EXCLUDE` and a name written out in full -- `x.com` finds
+`X.COM`; when several names match so (`x.com` and `X.COM` side by
+side), all of them are searched, as a wildcard would take them.  This
+holds for the Latin letters (ASCII) only: a letter of any other script
+in a file name is compared as it stands.  `/EXACT` changes none of it,
+it concerns the search strings alone.
 
 **A tree** is walked with the directory `...` -- the `[...]` of
 OpenVMS: everything below the directory before it, the pattern after it
@@ -101,7 +106,9 @@ applied in every directory of the tree.
 `src/.../include/*.h` is refused, a name such as `a...b` is just a name.
 It walks its own specification only: in `'.../*.c,*.h'` the `*.h` are
 those of the current directory.  (Up to X01-32 a tree was walked by the
-qualifier `/RECURSIVE`; it is gone.)
+qualifier `/RECURSIVE`; it is gone, and a command that still gives it
+-- `/RECURSIVE`, `/REC`, `--RECURSIVE` -- is refused with
+`%SEARCH-E-NORECURSE` and the completion code 2.)
 
 A pattern of `/EXCLUDE` that carries a slash is matched against the
 whole specification of a file, one that does not -- against its name
