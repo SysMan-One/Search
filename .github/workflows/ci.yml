@@ -1,0 +1,87 @@
+#++
+#       FACILITY: SEARCH - OpenVMS-style record search utility
+#
+#       AUTHOR: StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+#
+#       CREATION DATE: 10-NOV-2026
+#
+#       DESCRIPTION:
+#               Builds the product and runs its regression tests (ctest: smoke,
+#               helplib) on x86_64 and aarch64.
+#
+#               SEARCH wants StarLet (and, optionally, HELP) as INSTALLED CMake
+#               packages - see CMakeLists.txt.  Both are taken here as the latest
+#               archives of their GitHub repositories (SysMan-One/utility_routines,
+#               SysMan-One/vHELP), built and installed into a prefix of the runner,
+#               and the build of SEARCH is pointed at it with CMAKE_PREFIX_PATH.
+#               HELP is installed too, so /HELP is answered out of the library and
+#               the helplib test runs.
+#
+#                   push, pull_request, workflow_dispatch       build + ctest
+#
+#       MODIFICATION HISTORY:
+#
+#               10-NOV-2026     CLD     X01-33 : Initial revision.
+#
+#--
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+
+    env:
+      DEPS_PREFIX: ${{ github.workspace }}/_deps/prefix
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tools of the build host
+        run: sudo apt-get update -q && sudo apt-get install -y -q cmake gcc make
+
+      # StarLet first: HELP is built against the installed StarLet
+      - name: StarLet and HELP from GitHub
+        run: |
+          set -e
+          mkdir -p _deps
+          for l_repo in utility_routines vHELP
+          do
+            curl -sSfL --retry 3 -o "_deps/${l_repo}.tar.gz" \
+              "https://github.com/SysMan-One/${l_repo}/archive/HEAD.tar.gz"
+            mkdir -p "_deps/${l_repo}"
+            tar -xzf "_deps/${l_repo}.tar.gz" -C "_deps/${l_repo}" --strip-components=1
+            cmake -S "_deps/${l_repo}" -B "_deps/${l_repo}-build" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="${DEPS_PREFIX}" \
+              -DCMAKE_PREFIX_PATH="${DEPS_PREFIX}" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DBUILD_TESTING=OFF
+            cmake --build "_deps/${l_repo}-build" --parallel
+            cmake --install "_deps/${l_repo}-build"
+          done
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${DEPS_PREFIX}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: |
+          export PATH="${DEPS_PREFIX}/bin:${PATH}"
+          ctest --test-dir build --output-on-failure

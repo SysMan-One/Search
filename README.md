@@ -1,5 +1,7 @@
 # SEARCH
 
+[![CI](https://github.com/SysMan-One/Search/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SysMan-One/Search/actions/workflows/ci.yml)
+
 An OpenVMS-style record search utility for Linux: display the records of
 a set of files that carry a given combination of strings.
 
