@@ -68,7 +68,8 @@ jobs:
               -DCMAKE_INSTALL_PREFIX="${DEPS_PREFIX}" \
               -DCMAKE_PREFIX_PATH="${DEPS_PREFIX}" \
               -DCMAKE_INSTALL_LIBDIR=lib \
-              -DBUILD_TESTING=OFF
+              -DBUILD_TESTING=OFF \
+              -DHELP_TESTS=OFF -DHELP_BUILD_SYSCACHE=OFF -DHELP_ALIAS=OFF
             cmake --build "_deps/${l_repo}-build" --parallel
             cmake --install "_deps/${l_repo}-build"
           done
