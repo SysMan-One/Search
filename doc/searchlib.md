@@ -500,7 +500,7 @@ expanded. The case of the letters of a name is not significant, as
 on OpenVMS: '*.com' takes X.COM and x.com alike, and so does a
 pattern of /EXCLUDE.
 
-A tree is walked with the directory "..." -- the [...] of an
+A tree is walked with the directory "..." -- the \[...\] of an
 OpenVMS directory specification: everything below the directory
 before it, the pattern after it applied at every level:
 
@@ -668,5 +668,5 @@ the OpenVMS format:
 ```
 
 A build made for debugging names the module, the routine and the
-line as well -- [SEARCH\main:1039] -- which is of interest to
+line as well -- \[SEARCH\\main:1039\] -- which is of interest to
 whoever is looking into the utility rather than using it.
