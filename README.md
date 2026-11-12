@@ -244,7 +244,7 @@ Options:
 | `SEARCH$M_STRICT` | OFF | `-Werror` |
 | `SEARCH$M_HELPAPI` | ON | answer `/HELP` out of the library through `HELP::help` when the HELP package is found |
 | `SEARCH$M_HELPLIB` | ON | translate and install the help libraries through `help_add_library()` |
-| `SEARCH$K_HLBDIR` | `share/help` | where the libraries go |
+| `SEARCH_K_HLBDIR` | `share/help` | where the libraries go, taken from the prefix when relative; the image looks for `search.hlb` there |
 | `SEARCH$M_INSTALL_DOC` | ON | install the manual page, the README and the sources of the libraries |
 | `BUILD_TESTING` | ON | the spelling CMake uses |
 | `SEARCH$M_TESTS` | ON | the tests of this product |

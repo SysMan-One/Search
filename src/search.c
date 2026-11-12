@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X01-33ECO1"
-#define	__REV__		"1.33.1"
+#define	__IDENT__	"X.01-33ECO02"
+#define	__REV__		"1.33.2"
 
 /*
 **++
@@ -127,6 +127,13 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X.01-33ECO02	12-NOV-2026	CLD
+**		The product: the image looked for its help library at
+**		<prefix>//search.hlb - CMakeLists.txt (X-26) made SEARCH_K_HLBSPEC
+**		of the directory before it was set.  It is now
+**		<prefix>/share/help/search.hlb, where the library is installed.
+**		No change to this module but the identification.
 **
 **	X01-33ECO1	11-NOV-2026	CLD
 **		/RECURSIVE, /REC, --RECURSIVE, /NORECURSIVE ... were taken for

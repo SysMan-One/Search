@@ -13,6 +13,12 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		12-NOV-2026	CLD	X-26 : SEARCH$K_HLBDIR, renamed SEARCH_K_HLBDIR,
+#					is set before SEARCH_K_HLBSPEC is made of it;
+#					set after, the first configuration compiled
+#					<prefix>//search.hlb into the image, and /HELP
+#					found the library only beside the image.
+#
 #		12-NOV-2026	CLD	X-25 : The form X.aa-bb[ECOcc] is checked strictly:
 #					two digits in every field, X.01-24ECO3 is
 #					refused; the older Xaa-bb[ECOc] as it was.
@@ -330,12 +336,27 @@ target_link_libraries(search PRIVATE StarLet::starlet search_options Threads::Th
 #	plain identifiers - the value of the second one is a path and may
 #	carry anything.
 #
+#	The directory the help libraries are installed into.  It is set
+#	here, ahead of SEARCH_K_HLBSPEC below, which is made of it: set
+#	after, as it was, the first configuration of a tree compiled
+#	<prefix>//search.hlb into the image.  Relative, it is taken from
+#	the prefix, as install() takes it.  Spelled without a '$', as a
+#	new CMake identifier is.
+set(SEARCH_K_HLBDIR "${CMAKE_INSTALL_DATAROOTDIR}/help"
+		CACHE STRING "Directory the help libraries are installed into")
+
+if ( IS_ABSOLUTE "${SEARCH_K_HLBDIR}" )
+	set(L_HLBDIR "${SEARCH_K_HLBDIR}")
+else()
+	set(L_HLBDIR "${CMAKE_INSTALL_PREFIX}/${SEARCH_K_HLBDIR}")
+endif()
+
 if ( HELP_FOUND )
 	target_link_libraries(search PRIVATE HELP::help)
 
 	target_compile_definitions(search PRIVATE
 		SEARCH_WITH_HLB=1
-		SEARCH_K_HLBSPEC="${CMAKE_INSTALL_PREFIX}/${SEARCH$K_HLBDIR}/search.hlb")
+		SEARCH_K_HLBSPEC="${L_HLBDIR}/search.hlb")
 endif()
 
 #
@@ -358,9 +379,6 @@ endif()
 #
 option(SEARCH$M_HELPLIB "Translate and install the help libraries" ON)
 
-set(SEARCH$K_HLBDIR "${CMAKE_INSTALL_DATAROOTDIR}/help"
-		CACHE STRING "Directory the help libraries are installed into")
-
 if ( SEARCH$M_HELPLIB AND HELP_FOUND )
 	message(STATUS "SEARCH: help libraries translated by the HELP package")
 
@@ -368,13 +386,13 @@ if ( SEARCH$M_HELPLIB AND HELP_FOUND )
 		SOURCE		${CMAKE_CURRENT_SOURCE_DIR}/doc/searchlib.md
 		OUTPUT		${CMAKE_CURRENT_BINARY_DIR}/search.hlb
 		IDENT		${SEARCH$K_IDENT}
-		DESTINATION	${SEARCH$K_HLBDIR})
+		DESTINATION	${SEARCH_K_HLBDIR})
 
 	help_add_library(NAME searchlib_ru ALL NOFACILITY
 		SOURCE		${CMAKE_CURRENT_SOURCE_DIR}/doc/searchlib_ru.md
 		OUTPUT		${CMAKE_CURRENT_BINARY_DIR}/search_ru.hlb
 		IDENT		${SEARCH$K_IDENT}RU
-		DESTINATION	${SEARCH$K_HLBDIR}/ru)
+		DESTINATION	${SEARCH_K_HLBDIR}/ru)
 elseif ( SEARCH$M_HELPLIB )
 	message(STATUS "SEARCH: no HELP package found, the help libraries are not built")
 endif()
