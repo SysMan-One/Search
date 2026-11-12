@@ -241,13 +241,21 @@ Options:
 
 | option | default | |
 |---|---|---|
-| `SEARCH$M_STRICT` | OFF | `-Werror` |
-| `SEARCH$M_HELPAPI` | ON | answer `/HELP` out of the library through `HELP::help` when the HELP package is found |
-| `SEARCH$M_HELPLIB` | ON | translate and install the help libraries through `help_add_library()` |
+| `SEARCH_M_STRICT` | OFF | `-Werror` |
+| `SEARCH_M_HELPAPI` | ON | answer `/HELP` out of the library through `HELP::help` when the HELP package is found |
+| `SEARCH_M_HELPLIB` | ON | translate and install the help libraries through `help_add_library()` |
 | `SEARCH_K_HLBDIR` | `share/help` | where the libraries go, taken from the prefix when relative; the image looks for `search.hlb` there |
-| `SEARCH$M_INSTALL_DOC` | ON | install the manual page, the README and the sources of the libraries |
+| `SEARCH_M_INSTALL_DOC` | ON | install the manual page, the README and the sources of the libraries |
 | `BUILD_TESTING` | ON | the spelling CMake uses |
-| `SEARCH$M_TESTS` | ON | the tests of this product |
+| `SEARCH_M_TESTS` | ON | the tests of this product |
+
+Up to the kit X.01-33ECO02 these names were spelled with a `$`:
+`SEARCH$M_STRICT`, `SEARCH$M_HELPAPI`, `SEARCH$M_HELPLIB`,
+`SEARCH$M_INSTALL_DOC`, `SEARCH$M_TESTS`, and `SEARCH$K_HLBDIR` up to
+X.01-33ECO01.  The old names still work: the
+value is taken for the new name, and CMake prints a deprecation warning
+once.  Quote an old name for the shell (`-D'SEARCH$M_STRICT=ON'`), and do
+not give both names of one option - the old one wins.
 
 The identification of the product is stated once, by `__IDENT__` of the
 head module `src/search.c`, and the build reads it out of there and

@@ -13,6 +13,13 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		12-NOV-2026	CLD	X-27 : No '$' in a CMake identifier any more:
+#					SEARCH$K_IDENT/HEADMOD/IDENTLINE/MODULES are
+#					SEARCH_K_*, the options SEARCH$M_* are
+#					SEARCH_M_*.  The old names of the options and
+#					of SEARCH$K_HLBDIR (X-26) are still taken, with
+#					a deprecation warning, by s_search_option().
+#
 #		12-NOV-2026	CLD	X-26 : SEARCH$K_HLBDIR, renamed SEARCH_K_HLBDIR,
 #					is set before SEARCH_K_HLBSPEC is made of it;
 #					set after, the first configuration compiled
@@ -147,6 +154,37 @@ include(GNUInstallDirs)
 set(CMAKE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATAROOTDIR}/doc/search")
 
 #
+#	The options and cache entries of the product are spelled without a
+#	'$' (SEARCH_M_STRICT, SEARCH_K_HLBDIR); up to the kit X.01-33ECO02
+#	they were SEARCH$M_STRICT ..., and SEARCH$K_HLBDIR up to X.01-33ECO01.
+#	s_search_option() defines one under its name and, when the cache holds the old name - given with
+#	-D, or left by a tree configured before - takes its value for the
+#	new one, says so with a deprecation warning, and drops the old
+#	entry, so the warning is given once.  The old name is only ever
+#	built here, as a string, and read through $CACHE{}: no '$' is
+#	left in an identifier of this file.
+#
+#		A_NAME		the name, SEARCH_M_... or SEARCH_K_...
+#		A_TYPE		BOOL or STRING
+#		A_DEFAULT	the default value
+#		A_DOC		the text of the cache entry
+#
+function(s_search_option A_NAME A_TYPE A_DEFAULT A_DOC)
+	string(REGEX REPLACE "^SEARCH_" "SEARCH\$" L_OLD "${A_NAME}")
+
+	if ( DEFINED CACHE{${L_OLD}} )
+		set(L_VAL "$CACHE{${L_OLD}}")
+		message(DEPRECATION "${L_OLD} is deprecated, use ${A_NAME}: ${A_NAME}=${L_VAL} is taken")
+		set(${A_NAME} "${L_VAL}" CACHE ${A_TYPE} "${A_DOC}" FORCE)
+		unset(${L_OLD} CACHE)
+	elseif ( A_TYPE STREQUAL "BOOL" )
+		option(${A_NAME} "${A_DOC}" ${A_DEFAULT})
+	else()
+		set(${A_NAME} "${A_DEFAULT}" CACHE ${A_TYPE} "${A_DOC}")
+	endif()
+endfunction()
+
+#
 #	Product identification and configuration
 #
 #	The identification of the product is stated ONCE, by __IDENT__ of
@@ -154,16 +192,16 @@ set(CMAKE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATAROOTDIR}/doc/search")
 #	time it drifts - and it had: the module said X-09, this file X-15
 #	and the manual page X-14, all of one kit.  Everything that needs it
 #	- the help libraries, the manual page - now takes it from here.
-set(SEARCH$K_HEADMOD "${CMAKE_CURRENT_SOURCE_DIR}/src/search.c")
+set(SEARCH_K_HEADMOD "${CMAKE_CURRENT_SOURCE_DIR}/src/search.c")
 
-file(STRINGS "${SEARCH$K_HEADMOD}" SEARCH$K_IDENTLINE
+file(STRINGS "${SEARCH_K_HEADMOD}" SEARCH_K_IDENTLINE
 		REGEX "^#define[ \t]+__IDENT__")
 
-if ( NOT SEARCH$K_IDENTLINE MATCHES "\"([^\"]+)\"" )
-	message(FATAL_ERROR "No __IDENT__ in ${SEARCH$K_HEADMOD}")
+if ( NOT SEARCH_K_IDENTLINE MATCHES "\"([^\"]+)\"" )
+	message(FATAL_ERROR "No __IDENT__ in ${SEARCH_K_HEADMOD}")
 endif()
 
-set(SEARCH$K_IDENT "${CMAKE_MATCH_1}")
+set(SEARCH_K_IDENT "${CMAKE_MATCH_1}")
 
 #
 #	__IDENT__ and __REV__ are two spellings of one number and are kept
@@ -223,34 +261,32 @@ function(s_search_check_ident)
 	endforeach()
 endfunction()
 
-file(GLOB SEARCH$K_MODULES
+file(GLOB SEARCH_K_MODULES
 	${CMAKE_CURRENT_SOURCE_DIR}/src/*.c
 	${CMAKE_CURRENT_SOURCE_DIR}/include/*.h)
 
-s_search_check_ident(${SEARCH$K_MODULES})
+s_search_check_ident(${SEARCH_K_MODULES})
 
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SEARCH$K_MODULES})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SEARCH_K_MODULES})
 
 #	A change of the identification is a change of the configuration:
 #	without this the help libraries would keep the stamp of the run
 #	that configured the tree
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SEARCH$K_HEADMOD}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SEARCH_K_HEADMOD}")
 
-#	CONFIGURE_FILE() replaces @NAME@ only for a name of letters, digits
-#	and the like - a '$' in it is left alone and the template would ship
-#	with the placeholder in it - so the substitution goes through a
-#	plain alias.  The same reason HELP carries HELP_LIBDIR beside
-#	HELP$K_LIBDIR.
-set(SEARCH_IDENT "${SEARCH$K_IDENT}")
+#	The name the manual page template takes, @SEARCH_IDENT@.  It was an
+#	alias of SEARCH$K_IDENT, which CONFIGURE_FILE() could not substitute
+#	(a '$' in the name); kept, so the template stays as it is.
+set(SEARCH_IDENT "${SEARCH_K_IDENT}")
 
-message(STATUS "SEARCH: ${SEARCH$K_IDENT}, from src/search.c")
+message(STATUS "SEARCH: ${SEARCH_K_IDENT}, from src/search.c")
 
-option(SEARCH$M_STRICT "Treat the compilation diagnostics as errors" OFF)
+s_search_option(SEARCH_M_STRICT BOOL OFF "Treat the compilation diagnostics as errors")
 
-#	BUILD_TESTING is the spelling CMake uses; SEARCH$M_TESTS turns the
+#	BUILD_TESTING is the spelling CMake uses; SEARCH_M_TESTS turns the
 #	tests of this product off without touching it
 option(BUILD_TESTING  "Build the regression tests"                 ON)
-option(SEARCH$M_TESTS "Build the functional tests of this product" ON)
+s_search_option(SEARCH_M_TESTS BOOL ON "Build the functional tests of this product")
 
 #
 #	Translation options, carried to every target of the product
@@ -260,7 +296,7 @@ add_library(search_options INTERFACE)
 target_compile_options(search_options INTERFACE
 	-Wall -Wextra -Wwrite-strings -Wno-unused-parameter)
 
-if ( SEARCH$M_STRICT )
+if ( SEARCH_M_STRICT )
 	target_compile_options(search_options INTERFACE -Werror)
 endif()
 
@@ -277,9 +313,9 @@ endif()
 #	this product then links - two revisions of it in one image being
 #	exactly what a duplicate symbol at link time is made of.
 #
-option(SEARCH$M_HELPAPI "Answer /HELP out of the help library when HELP is found" ON)
+s_search_option(SEARCH_M_HELPAPI BOOL ON "Answer /HELP out of the help library when HELP is found")
 
-if ( SEARCH$M_HELPAPI )
+if ( SEARCH_M_HELPAPI )
 	find_package(HELP 1.0 QUIET)
 endif()
 
@@ -340,10 +376,10 @@ target_link_libraries(search PRIVATE StarLet::starlet search_options Threads::Th
 #	here, ahead of SEARCH_K_HLBSPEC below, which is made of it: set
 #	after, as it was, the first configuration of a tree compiled
 #	<prefix>//search.hlb into the image.  Relative, it is taken from
-#	the prefix, as install() takes it.  Spelled without a '$', as a
-#	new CMake identifier is.
-set(SEARCH_K_HLBDIR "${CMAKE_INSTALL_DATAROOTDIR}/help"
-		CACHE STRING "Directory the help libraries are installed into")
+#	the prefix, as install() takes it.  SEARCH$K_HLBDIR, its old
+#	name, is still taken (s_search_option() above).
+s_search_option(SEARCH_K_HLBDIR STRING "${CMAKE_INSTALL_DATAROOTDIR}/help"
+		"Directory the help libraries are installed into")
 
 if ( IS_ABSOLUTE "${SEARCH_K_HLBDIR}" )
 	set(L_HLBDIR "${SEARCH_K_HLBDIR}")
@@ -377,23 +413,23 @@ endif()
 #	<prefix>/share/help, the Russian one under ru/, so that a plain
 #	'vhelp search' finds the topic with nothing being set.
 #
-option(SEARCH$M_HELPLIB "Translate and install the help libraries" ON)
+s_search_option(SEARCH_M_HELPLIB BOOL ON "Translate and install the help libraries")
 
-if ( SEARCH$M_HELPLIB AND HELP_FOUND )
+if ( SEARCH_M_HELPLIB AND HELP_FOUND )
 	message(STATUS "SEARCH: help libraries translated by the HELP package")
 
 	help_add_library(NAME searchlib ALL NOFACILITY
 		SOURCE		${CMAKE_CURRENT_SOURCE_DIR}/doc/searchlib.md
 		OUTPUT		${CMAKE_CURRENT_BINARY_DIR}/search.hlb
-		IDENT		${SEARCH$K_IDENT}
+		IDENT		${SEARCH_K_IDENT}
 		DESTINATION	${SEARCH_K_HLBDIR})
 
 	help_add_library(NAME searchlib_ru ALL NOFACILITY
 		SOURCE		${CMAKE_CURRENT_SOURCE_DIR}/doc/searchlib_ru.md
 		OUTPUT		${CMAKE_CURRENT_BINARY_DIR}/search_ru.hlb
-		IDENT		${SEARCH$K_IDENT}RU
+		IDENT		${SEARCH_K_IDENT}RU
 		DESTINATION	${SEARCH_K_HLBDIR}/ru)
-elseif ( SEARCH$M_HELPLIB )
+elseif ( SEARCH_M_HELPLIB )
 	message(STATUS "SEARCH: no HELP package found, the help libraries are not built")
 endif()
 
@@ -409,16 +445,16 @@ endif()
 #		<prefix>/share/doc/search/README.md
 #		<prefix>/share/doc/search/searchlib[_ru].md
 #
-#	SEARCH$M_INSTALL_DOC=OFF leaves the manual page, the README and the
+#	SEARCH_M_INSTALL_DOC=OFF leaves the manual page, the README and the
 #	sources of the libraries out, which is what a kit built for a
 #	container wants.
 #
-option(SEARCH$M_INSTALL_DOC "Install the manual page and the README" ON)
+s_search_option(SEARCH_M_INSTALL_DOC BOOL ON "Install the manual page and the README")
 
 install(TARGETS search
 	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-if ( SEARCH$M_INSTALL_DOC )
+if ( SEARCH_M_INSTALL_DOC )
 	#	The manual page names the identification in its header, so it
 	#	is generated rather than shipped ready-made
 	configure_file(
@@ -465,28 +501,28 @@ add_custom_target(kit
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/kit
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_CURRENT_SOURCE_DIR}/src
-			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH$K_IDENT}/src
+			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH_K_IDENT}/src
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_CURRENT_SOURCE_DIR}/include
-			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH$K_IDENT}/include
+			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH_K_IDENT}/include
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_CURRENT_SOURCE_DIR}/doc
-			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH$K_IDENT}/doc
+			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH_K_IDENT}/doc
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_CURRENT_SOURCE_DIR}/test
-			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH$K_IDENT}/test
+			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH_K_IDENT}/test
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
 			${CMAKE_CURRENT_SOURCE_DIR}/cmake
-			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH$K_IDENT}/cmake
+			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH_K_IDENT}/cmake
 	COMMAND ${CMAKE_COMMAND} -E copy
 			${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
 			${CMAKE_CURRENT_SOURCE_DIR}/README.md
-			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH$K_IDENT}/
+			${CMAKE_CURRENT_BINARY_DIR}/kit/SEARCH-${SEARCH_K_IDENT}/
 	COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_CURRENT_BINARY_DIR}/kit
 			${CMAKE_COMMAND} -E tar czf
-			${CMAKE_CURRENT_BINARY_DIR}/SEARCH-${SEARCH$K_IDENT}.tar.gz
-			SEARCH-${SEARCH$K_IDENT}
-	COMMENT "Making SEARCH-${SEARCH$K_IDENT}.tar.gz")
+			${CMAKE_CURRENT_BINARY_DIR}/SEARCH-${SEARCH_K_IDENT}.tar.gz
+			SEARCH-${SEARCH_K_IDENT}
+	COMMENT "Making SEARCH-${SEARCH_K_IDENT}.tar.gz")
 
 #
 #	Functional tests
@@ -494,7 +530,7 @@ add_custom_target(kit
 if ( BUILD_TESTING )
 	enable_testing()
 
-	if ( SEARCH$M_TESTS )
+	if ( SEARCH_M_TESTS )
 		add_subdirectory(test)
 	endif()
 endif()
