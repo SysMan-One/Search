@@ -13,6 +13,12 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		12-NOV-2026	CLD	X-24 : An __IDENT__ may be X.aa-bb[ECOcc]
+#					(the form of the releases from now on, the
+#					ECO of two digits) as well as Xaa-bb[ECOc]
+#					of the modules not changed since; __REV__
+#					aa.bb.cc is checked against both.
+#
 #		 2-OCT-2026	RRL	X-23 : src/srchthr.c, the pool of threads of
 #					/THREADS; the image links Threads::Threads.
 #		 2-OCT-2026	RRL	X-22 : The help libraries are translated
@@ -151,7 +157,8 @@ set(SEARCH$K_IDENT "${CMAKE_MATCH_1}")
 
 #
 #	__IDENT__ and __REV__ are two spellings of one number and are kept
-#	in step by hand, so the build checks them: Xnn-nn[ECOnn] against
+#	in step by hand, so the build checks them: X.nn-nn[ECOnn] (or the
+#	older Xnn-nn[ECOn] of a module not changed since) against
 #	major.minor.nn, the nn of an ECO standing as the patch level and 0
 #	standing where there is no ECO.  A module that has been revised without its
 #	__REV__ being brought along stops the configuration - the two would
@@ -178,9 +185,9 @@ function(s_search_check_ident)
 
 		set(L_R "${CMAKE_MATCH_1}")
 
-		#	Xnn-nn, and ECOnn when there is one
-		if ( NOT L_I MATCHES "^X0*([0-9]+)-0*([0-9]+)(ECO0*([0-9]+))?$" )
-			message(FATAL_ERROR "${F}: __IDENT__ \"${L_I}\" is not of the form Xnn-nn[ECOnn]")
+		#	X.nn-nn (or Xnn-nn), and ECOnn when there is one
+		if ( NOT L_I MATCHES "^X\\.?0*([0-9]+)-0*([0-9]+)(ECO0*([0-9]+))?$" )
+			message(FATAL_ERROR "${F}: __IDENT__ \"${L_I}\" is not of the form X.nn-nn[ECOnn] (or Xnn-nn[ECOnn])")
 		endif()
 
 		set(L_MAJ "${CMAKE_MATCH_1}")
