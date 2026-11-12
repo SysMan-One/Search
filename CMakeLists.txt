@@ -13,7 +13,7 @@
 #
 #	MODIFICATION HISTORY:
 #
-#		12-NOV-2026	CLD	X-27 : No '$' in a CMake identifier any more:
+#		12-NOV-2026	RRL	X-27 : No '$' in a CMake identifier any more:
 #					SEARCH$K_IDENT/HEADMOD/IDENTLINE/MODULES are
 #					SEARCH_K_*, the options SEARCH$M_* are
 #					SEARCH_M_*.  The old names of the options and

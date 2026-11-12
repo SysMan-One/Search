@@ -23,7 +23,7 @@
 #
 #       MODIFICATION HISTORY:
 #
-#               12-NOV-2026     CLD     X.01-33ECO02 : STARLET_REF fde1672 = tag v1.7.3
+#               12-NOV-2026     RRL     X.01-33ECO02 : STARLET_REF fde1672 = tag v1.7.3
 #                                       (was 7e910f8, which is v1.7.2-3, three CI
 #                                       commits past 1.7.2); 1.7.3 carries the code
 #                                       of 1.7.2 and adds the Debian packages.
