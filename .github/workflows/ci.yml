@@ -10,9 +10,11 @@
 #               helplib) on x86_64 and aarch64.
 #
 #               SEARCH wants StarLet (and, optionally, HELP) as INSTALLED CMake
-#               packages - see CMakeLists.txt.  Both are taken here as the latest
-#               archives of their GitHub repositories (SysMan-One/utility_routines,
-#               SysMan-One/vHELP), built and installed into a prefix of the runner,
+#               packages - see CMakeLists.txt.  Both are taken here as archives of
+#               a pinned commit (STARLET_REF, VHELP_REF) of their GitHub repositories
+#               (SysMan-One/utility_routines, SysMan-One/vHELP) - a new commit there
+#               cannot break this build unseen; move the pin by hand.  They are
+#               built and installed into a prefix of the runner,
 #               and the build of SEARCH is pointed at it with CMAKE_PREFIX_PATH.
 #               HELP is installed too, so /HELP is answered out of the library and
 #               the helplib test runs.
@@ -20,6 +22,10 @@
 #                   push, pull_request, workflow_dispatch       build + ctest
 #
 #       MODIFICATION HISTORY:
+#
+#               12-NOV-2026     CLD     X01-33ECO1 : StarLet and HELP are pinned commits
+#                                       (STARLET_REF 7e910f8 = 1.7.2, VHELP_REF e7f90c4 =
+#                                       HELP X01-38, mdparse.c X01-02), not HEAD.
 #
 #               11-NOV-2026     CLD     X01-33ECO1 : permissions: contents: read - the
 #                                       job reads the tree and nothing else, so the
@@ -42,6 +48,11 @@ on:
 
 permissions:
   contents: read
+
+#	The pinned commits of StarLet and HELP - moved by hand, after a check
+env:
+  STARLET_REF: 7e910f809db2932c0a39904280322eb1eedef9d8     # StarLet 1.7.2
+  VHELP_REF: e7f90c4be659dec6fa5996520ea0ea827ca0b689     # HELP X01-38 (mdparse.c X01-02)
 
 jobs:
   test:
@@ -68,10 +79,11 @@ jobs:
         run: |
           set -e
           mkdir -p _deps
-          for l_repo in utility_routines vHELP
+          for l_pair in "utility_routines:${STARLET_REF}" "vHELP:${VHELP_REF}"
           do
+            l_repo="${l_pair%%:*}" l_ref="${l_pair#*:}"
             curl -sSfL --retry 3 -o "_deps/${l_repo}.tar.gz" \
-              "https://github.com/SysMan-One/${l_repo}/archive/HEAD.tar.gz"
+              "https://github.com/SysMan-One/${l_repo}/archive/${l_ref}.tar.gz"
             mkdir -p "_deps/${l_repo}"
             tar -xzf "_deps/${l_repo}.tar.gz" -C "_deps/${l_repo}" --strip-components=1
             cmake -S "_deps/${l_repo}" -B "_deps/${l_repo}-build" \
