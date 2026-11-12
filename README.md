@@ -260,13 +260,15 @@ one number:
 
 | | | |
 |---|---|---|
-| `__IDENT__` | `X01-07` | the OpenVMS spelling, `Xnn-nn`; a minor correction of an error is marked `X01-07ECO02` after it |
+| `__IDENT__` | `X.01-07` | the OpenVMS spelling, `X.nn-nn`, a dot after the letter; a minor correction of an error is marked `X.01-07ECO02` after it, the ECO always of two digits |
 | `__REV__` | `1.7.0` | the Unix spelling, made out of `__IDENT__`: `major.minor.nn`, the `nn` of an `ECOnn` standing as the patch level and `0` where there is no ECO |
 
 The two are kept in step by hand, so the build checks them: a module
 revised without its `__REV__` being brought along stops the
 configuration, and so does an `__IDENT__` that is not of the form
-`Xnn-nn[ECOnn]`.
+`X.nn-nn[ECOnn]`.  A module not changed since keeps the older form
+`Xnn-nn[ECOn]` (`X01-06ECO1`), which the build takes as well; it gets the
+new one at its next revision.
 
 In the head module `__IDENT__` carries the identification of the
 *product*, so it runs apart from the labels of that module's own
