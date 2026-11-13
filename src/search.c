@@ -1,6 +1,6 @@
 #define	__MODULE__	"SEARCH"
-#define	__IDENT__	"X.01-33ECO02"
-#define	__REV__		"1.33.2"
+#define	__IDENT__	"X.01-33ECO03"
+#define	__REV__		"1.33.3"
 
 /*
 **++
@@ -127,6 +127,13 @@
 **		other module carries the revision of that module, as usual.
 **
 **  MODIFICATION HISTORY:
+**
+**	X.01-33ECO03	13-NOV-2026	RRL
+**		The product: the first one released with Debian packages
+**		(search_1.33.3, amd64 and arm64) and a signed SHA256SUMS on
+**		GitHub; the build options lost their '$' (SEARCH_M_*,
+**		SEARCH_K_*, the old names still taken).  No change to this
+**		module but the identification.
 **
 **	X.01-33ECO02	12-NOV-2026	CLD
 **		The product: the image looked for its help library at
