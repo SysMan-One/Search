@@ -1,6 +1,7 @@
 # SEARCH
 
 [![CI](https://github.com/SysMan-One/Search/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SysMan-One/Search/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/SysMan-One/Search?sort=date)](https://github.com/SysMan-One/Search/releases/latest)
 
 An OpenVMS-style record search utility for Linux: display the records of
 a set of files that carry a given combination of strings.
@@ -282,6 +283,48 @@ In the head module `__IDENT__` carries the identification of the
 *product*, so it runs apart from the labels of that module's own
 modification history; everywhere else the two are the same number.
 
+## Releases
+
+A tag that is `__IDENT__` of `src/search.c`, exactly and with no `v`
+(`X.01-34`, `X.01-34ECO01`; the older form `X01-33ECO1` is taken as well),
+makes a GitHub Release by `.github/workflows/release.yml`: the product is
+built on Debian 12 for amd64 and arm64, its tests are run, the DEB
+`search_<aa.bb.cc>_<arch>.deb` (prefix `/usr`, the version derived from the
+identification, `X.01-33ECO02` giving `1.33.2`) is installed, run and purged
+on Debian 12, Debian 13 and Ubuntu 24.04, and the packages, the sources
+tarball `search-<ident>.tar.gz`, `SHA256SUMS` and its signature are attached.
+The packaging came after the kit X.01-33ECO02, so the releases begin with
+the kit after it.
+
+Install a package with
+
+    sudo apt install ./search_<version>_<arch>.deb
+
+The same package is made by hand with `cpack -G DEB` in a build tree
+configured with `-DCMAKE_INSTALL_PREFIX=/usr`.
+
+Every push and every pull request is built and tested (x86_64 and aarch64,
+`ctest`) by `.github/workflows/ci.yml`, the badge at the top.
+
+## Checking a download
+
+A release carries `SHA256SUMS.minisig`, a
+[minisign](https://jedisct1.github.io/minisign/) signature of `SHA256SUMS`:
+one signature for every package and the sources tarball.  The public key is
+in `minisign.pub` here (the same key signs the kits of AlphaEmu, HELP and
+StarLet):
+
+    RWQl4NAqFsHKkNoHkS52WSZSk+2kb+e58DWYpoi/jVFa6TqOTAm3Ph14
+
+Put the files you took next to `SHA256SUMS` and `SHA256SUMS.minisig`, then:
+
+    minisign -Vm SHA256SUMS -P RWQl4NAqFsHKkNoHkS52WSZSk+2kb+e58DWYpoi/jVFa6TqOTAm3Ph14
+    sha256sum -c --ignore-missing SHA256SUMS
+
+The first must say `Signature and comment signature verified`, the second
+`OK` for every file.  Anything else - the file is not the one released: do
+not install it.
+
 ## Layout
 
     include/srchdef.h    condition values, contexts, prototypes
@@ -296,6 +339,7 @@ modification history; everywhere else the two are the same number.
                          is stamped in by the build too
     doc/searchlib_ru.md  the same in Russian
     cmake/               the script behind the 'uninstall' target
+    minisign.pub         the public key of the release signatures
     test/smoke.sh        34 functional checks
     test/helplib.sh      7 checks of the libraries, where HELP is present
 

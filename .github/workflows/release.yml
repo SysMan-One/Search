@@ -1,0 +1,315 @@
+#++
+#       FACILITY: SEARCH - OpenVMS-style record search utility: the signed release kits (amd64, arm64)
+#
+#       AUTHOR: StarLet Squad and Ruslan R. Laishev (AKA: BadAss SysMan)
+#
+#       CREATION DATE: 13-NOV-2026
+#
+#       DESCRIPTION:
+#               A push of the tag that is __IDENT__ of src/search.c builds the product
+#               on Debian 12 (bookworm) for amd64 and arm64, runs its regression tests
+#               (ctest: smoke, helplib), makes the DEB (prefix /usr), installs it on
+#               Debian 12, Debian 13 and Ubuntu 24.04, runs it, purges it, and attaches
+#               the packages, the sources tarball search-<ident>.tar.gz, SHA256SUMS and
+#               its minisign signature to the Release of that tag.
+#
+#               The manual run (Actions -> release -> Run workflow) with the <tag> input
+#               does the same for an existing tag (the files of its Release are
+#               replaced); without it - only builds and tests the branch, see the run's
+#               artifacts; the release job is skipped.
+#
+#               The tag is __IDENT__ of src/search.c as it stands, with no "v", in either
+#               form:
+#                   X.aa-bb[ECOcc]      the form from 12-NOV-2026, two digits in every
+#                                       field (X.01-33ECO02)
+#                   Xaa-bb[ECOc]        the older form of the earlier tags (X01-33,
+#                                       X01-33ECO1)
+#               The ident is never given on the command line here, so a tag cannot name
+#               a kit the tree is not.  Anything else is refused before the build.
+#
+#               The packaging (CPack) is in CMakeLists.txt from X-28 of that file, after
+#               the tag X.01-33ECO02: a tree without it - every tag up to and including
+#               X.01-33ECO02 - is refused with a message, not left to fail in cpack.
+#
+#               StarLet and HELP are pinned commits (STARLET_REF, VHELP_REF), the same as
+#               in ci.yml; both are static archives, so the package depends on the C
+#               library only.  The image looks for its help library at
+#               /usr/share/help/search.hlb, where the package puts it.
+#
+#       MODIFICATION HISTORY:
+#
+#               13-NOV-2026     RRL     Initial version, after the release.yml of
+#                                       skshow and yaNetCheck.
+#
+#--
+
+name: release
+
+on:
+  push:
+    tags: ['X.*', 'X[0-9]*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag (X.01-34), equal to __IDENT__ of src/search.c of its tree, to build and release; empty - build and test only"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+# The pinned commits of StarLet and HELP - moved by hand, after a check (the same as ci.yml)
+env:
+  STARLET_REF: fde1672f770155df542b8b909fa3b9470f642044     # StarLet 1.7.3 (tag v1.7.3)
+  VHELP_REF: 9f89cd6277a4d785978aa8e9202d4782e7dce5e5     # HELP X.01-38ECO01
+  DEPS_PREFIX: /opt/search-deps
+
+jobs:
+  deb:
+    name: build ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: debian:bookworm
+    env:
+      ARCH: ${{ matrix.arch }}
+      # The tag of this run: the input, or the pushed tag; empty for a build of a branch and for a
+      # manual run without the input, even one started from a tag ref - that one builds and tests only
+      TAG: ${{ inputs.tag || (github.event_name == 'push' && github.ref_type == 'tag' && github.ref_name || '') }}
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential cmake dpkg-dev file git ca-certificates curl
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      # Before anything is built: a tag must be of one of the two forms and __IDENT__ of its tree,
+      # and the tree must carry the packaging
+      - name: Check the tag
+        run: |
+          ident=$(sed -n 's/^#define[[:space:]]*__IDENT__[[:space:]]*"\([^"]*\)".*/\1/p' src/search.c)
+          test -n "$ident" || { echo "::error::no __IDENT__ in src/search.c"; exit 1; }
+          echo "__IDENT__ of src/search.c: $ident"
+          if ! grep '^include(CPack)' CMakeLists.txt > /dev/null; then
+            echo "::error::the tree of ${TAG:-this branch} has no packaging (CPack): the first release with packages is the one after X.01-33ECO02"
+            exit 1
+          fi
+          if [ -z "$TAG" ]; then
+            echo "No tag: build and test only"
+            exit 0
+          fi
+          if ! [[ "$TAG" =~ ^X\.[0-9]{2}-[0-9]{2}(ECO[0-9]{2})?$ || "$TAG" =~ ^X[0-9]{2}-[0-9]{2}(ECO[0-9]+)?$ ]]; then
+            echo "::error::the tag $TAG is of neither form X.aa-bb[ECOcc] nor Xaa-bb[ECOc]"
+            exit 1
+          fi
+          test "$TAG" = "$ident" || { echo "::error::the tag $TAG is not __IDENT__ $ident of src/search.c"; exit 1; }
+          echo "Tag $TAG = __IDENT__"
+
+      # StarLet first: HELP is built against the installed StarLet
+      - name: StarLet and HELP from GitHub
+        run: |
+          set -e
+          mkdir -p /tmp/deps
+          for l_pair in "utility_routines:${STARLET_REF}" "vHELP:${VHELP_REF}"
+          do
+            l_repo="${l_pair%%:*}" l_ref="${l_pair#*:}"
+            curl -sSfL --retry 3 -o "/tmp/deps/${l_repo}.tar.gz" \
+              "https://github.com/SysMan-One/${l_repo}/archive/${l_ref}.tar.gz"
+            mkdir -p "/tmp/deps/${l_repo}"
+            tar -xzf "/tmp/deps/${l_repo}.tar.gz" -C "/tmp/deps/${l_repo}" --strip-components=1
+            cmake -S "/tmp/deps/${l_repo}" -B "/tmp/deps/${l_repo}-build" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="${DEPS_PREFIX}" \
+              -DCMAKE_PREFIX_PATH="${DEPS_PREFIX}" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DBUILD_TESTING=OFF \
+              -DHELP_TESTS=OFF -DHELP_BUILD_SYSCACHE=OFF -DHELP_ALIAS=OFF
+            cmake --build "/tmp/deps/${l_repo}-build" -j "$(nproc)"
+            cmake --install "/tmp/deps/${l_repo}-build"
+          done
+
+      # Prefix /usr: the image carries the place of search.hlb under it
+      - name: Build, test, package
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_PREFIX_PATH="${DEPS_PREFIX}"
+          cmake --build build -j "$(nproc)"
+          export PATH="${DEPS_PREFIX}/bin:${PATH}"
+          ctest --test-dir build --output-on-failure || {
+            rc=$?
+            # an annotation is visible without signing in: the names of the failed tests
+            for t in $(sed 's/^[0-9]*://' build/Testing/Temporary/LastTestsFailed.log); do echo "::error::ctest FAILED: $t"; done
+            exit $rc
+          }
+          (cd build && cpack -G DEB)
+
+      # grep reads the whole list, not -q: under "bash -eo pipefail" an early exit
+      # of grep -q kills the writer with SIGPIPE and fails the step
+      - name: Check the package
+        run: |
+          deb=$(ls build/*.deb)
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb"
+          case "$deb" in build/search_*_"${ARCH}".deb) ;; *) echo "::error::wrong name: $deb"; exit 1;; esac
+          for f in bin/search share/help/search.hlb share/help/ru/search_ru.hlb share/man/man1/search.1 share/doc/search/README.md
+          do
+            dpkg-deb --contents "$deb" | grep " \./usr/$f\$" > /dev/null || { echo "::error::no /usr/$f in $deb"; exit 1; }
+          done
+          # The image must look for its library where the package puts it
+          rm -rf /tmp/x && mkdir /tmp/x && dpkg-deb -x "$deb" /tmp/x
+          strings /tmp/x/usr/bin/search | grep -x '/usr/share/help/search\.hlb' > /dev/null \
+            || { echo "::error::/usr/share/help/search.hlb is not compiled into the image"; exit 1; }
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: deb-${{ matrix.arch }}
+          path: build/*.deb
+          if-no-files-found: error
+
+  test:
+    name: install ${{ matrix.arch }} on ${{ matrix.distro }}
+    needs: deb
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        distro: ['debian:bookworm', 'debian:trixie', 'ubuntu:noble']
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.distro }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      LC_ALL: C
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: deb-${{ matrix.arch }}
+
+      # The Ubuntu image is minimized: dpkg is told to leave /usr/share/man and
+      # /usr/share/doc out, and /usr/bin/man is a stub (the real one is man.REAL).
+      # The excludes go first, so the man page of the package is put down.
+      - name: Install the package
+        run: |
+          if ls /etc/dpkg/dpkg.cfg.d/* > /dev/null 2>&1; then
+            sed -i '/^path-exclude/d; /^path-include/d' /etc/dpkg/dpkg.cfg.d/*
+          fi
+          apt-get update
+          apt-get install --yes --no-install-recommends man-db
+          apt-get install --yes ./*.deb
+          test -x /usr/bin/search
+          test -f /usr/share/help/search.hlb
+          test -f /usr/share/help/ru/search_ru.hlb
+          test -f /usr/share/man/man1/search.1
+
+      - name: Run it, remove it
+        run: |
+          out=$(search /etc/os-release ID)
+          echo "$out"
+          echo "$out" | grep '^ID=' > /dev/null
+          # Out of the library, not the summary built into the image
+          out=$(search /HELP)
+          echo "$out" | head -n 12
+          echo "$out" | grep 'exits with the codes of grep' > /dev/null \
+            || { echo "::error::/HELP did not answer out of /usr/share/help/search.hlb"; exit 1; }
+          man=/usr/bin/man
+          if [ -x /usr/bin/man.REAL ]; then man=/usr/bin/man.REAL; fi
+          "$man" -w search
+          test "$("$man" -w search)" = /usr/share/man/man1/search.1
+          dpkg --purge search
+          # (a '!' in front would not stop the step: errexit ignores it)
+          if dpkg -s search > /dev/null 2>&1; then echo "::error::search still known to dpkg after the purge"; exit 1; fi
+          for f in /usr/bin/search /usr/share/help/search.hlb /usr/share/help/ru/search_ru.hlb /usr/share/man/man1/search.1 /usr/share/doc/search
+          do
+            if [ -e "$f" ]; then echo "::error::$f left after the purge"; exit 1; fi
+          done
+
+  release:
+    name: GitHub Release
+    needs: test
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.tag != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          path: src
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: 'deb-*'
+          merge-multiple: true
+
+      - name: Make the files of the Release
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          ident=$(sed -n 's/^#define[[:space:]]*__IDENT__[[:space:]]*"\([^"]*\)".*/\1/p' src/src/search.c)
+          test -n "$ident" || { echo "::error::no __IDENT__ in src/search.c"; exit 1; }
+          if ! [[ "$TAG" =~ ^X\.[0-9]{2}-[0-9]{2}(ECO[0-9]{2})?$ || "$TAG" =~ ^X[0-9]{2}-[0-9]{2}(ECO[0-9]+)?$ ]]; then
+            echo "::error::the tag $TAG is of neither form X.aa-bb[ECOcc] nor Xaa-bb[ECOc]"
+            exit 1
+          fi
+          test "$TAG" = "$ident" || { echo "::error::the tag $TAG is not __IDENT__ $ident of src/search.c"; exit 1; }
+          # The version of the packages: X.01-33ECO02 gives 1.33.2, X01-33 gives 1.33.0
+          ver=$(echo "$ident" | sed -E 's/^X\.?([0-9]+)-([0-9]+)(ECO([0-9]+))?$/\1.\2.\4/; s/\.$/.0/; s/(^|\.)0+([0-9])/\1\2/g')
+          echo "Version of the packages: $ver"
+          test "$(ls search_"$ver"_*.deb | wc -l)" = 2 || { echo "::error::not the two packages of $ver"; ls *.deb; exit 1; }
+          # The sources: the tree of the tag as git has it, nothing built in it
+          git -C src archive --format=tar.gz --prefix="search-$ident/" -o "$PWD/search-$ident.tar.gz" HEAD
+          tar tzf "search-$ident.tar.gz" | grep -x "search-$ident/src/search.c" > /dev/null
+          ls -l *.deb *.tar.gz
+          sha256sum *.deb *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          echo "ident=$ident" >> "$GITHUB_ENV"
+
+      # The secret MINISIGN_KEY is the secret key of minisign.pub, whole text
+      # (no password); it lives in the runner's temporary directory for this
+      # step only.  The signature is checked with the public key pinned below
+      # (the one of minisign.pub) before anything is published.
+      - name: Sign SHA256SUMS
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [ -z "${MINISIGN_KEY}" ]
+          then
+            echo "::error::no MINISIGN_KEY secret - the release would go out unsigned"
+            exit 1
+          fi
+          sudo apt-get update -q && sudo apt-get install -y -q minisign
+          key="${RUNNER_TEMP}/minisign.key"
+          trap 'rm -f "${key}"' EXIT
+          ( umask 077; printf '%s\n' "${MINISIGN_KEY}" > "${key}" )
+          minisign -S -s "${key}" -m SHA256SUMS \
+            -t "SEARCH ${TAG} SHA256SUMS signed $(date -u +%d-%b-%Y | tr a-z A-Z)"
+          # The key is pinned here, not read from src/: an older tag has no minisign.pub.
+          minisign -Vm SHA256SUMS -P RWQl4NAqFsHKkNoHkS52WSZSk+2kb+e58DWYpoi/jVFa6TqOTAm3Ph14
+
+      - name: Attach the files to the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" *.deb *.tar.gz SHA256SUMS SHA256SUMS.minisig --clobber
+          else
+            gh release create "$TAG" *.deb *.tar.gz SHA256SUMS SHA256SUMS.minisig --title "SEARCH $ident" --notes-file - <<EOF
+          SEARCH $ident - an OpenVMS-style record search utility for Linux: the records of a set of files that carry a given combination of strings. The .deb for amd64 and arm64 is installed on Debian 12, Debian 13 and Ubuntu 24.04: \`sudo apt install ./search_<version>_<arch>.deb\`; the files are in /usr, \`search /HELP\` answers out of /usr/share/help/search.hlb. The sources: \`search-$ident.tar.gz\`.
+
+          To check a download: \`minisign -Vm SHA256SUMS -P RWQl4NAqFsHKkNoHkS52WSZSk+2kb+e58DWYpoi/jVFa6TqOTAm3Ph14\` (\`SHA256SUMS.minisig\` next to it), then \`sha256sum -c --ignore-missing SHA256SUMS\`.
+          EOF
+          fi

@@ -13,6 +13,16 @@
 #
 #	MODIFICATION HISTORY:
 #
+#		13-NOV-2026	RRL	X-28 : Release packaging.  CPACK makes the
+#					Debian package search_<aa.bb.cc>_<arch>.deb
+#					(section utils, the prefix of the
+#					configuration - /usr for a release), its
+#					version derived from __IDENT__ of the head
+#					module: X.01-33ECO02 gives 1.33.2, not the
+#					1.0.0 of project().  The workflow
+#					.github/workflows/release.yml builds it for
+#					a tag equal to __IDENT__.
+#
 #		12-NOV-2026	RRL	X-27 : No '$' in a CMake identifier any more:
 #					SEARCH$K_IDENT/HEADMOD/IDENTLINE/MODULES are
 #					SEARCH_K_*, the options SEARCH$M_* are
@@ -202,6 +212,21 @@ if ( NOT SEARCH_K_IDENTLINE MATCHES "\"([^\"]+)\"" )
 endif()
 
 set(SEARCH_K_IDENT "${CMAKE_MATCH_1}")
+
+#	The version of the package, aa.bb.cc of the identification with the
+#	leading zeros dropped: X.01-33ECO02 is 1.33.2, X01-33 is 1.33.0.  The
+#	form itself is checked below, by s_search_check_ident().
+if ( NOT SEARCH_K_IDENT MATCHES "^X\\.?0*([0-9]+)-0*([0-9]+)(ECO0*([0-9]+))?$" )
+	message(FATAL_ERROR "__IDENT__ \"${SEARCH_K_IDENT}\" of ${SEARCH_K_HEADMOD} gives no version")
+endif()
+
+set(SEARCH_K_VMAJOR "${CMAKE_MATCH_1}")
+set(SEARCH_K_VMINOR "${CMAKE_MATCH_2}")
+set(SEARCH_K_VPATCH "${CMAKE_MATCH_4}")
+
+if ( SEARCH_K_VPATCH STREQUAL "" )
+	set(SEARCH_K_VPATCH "0")
+endif()
 
 #
 #	__IDENT__ and __REV__ are two spellings of one number and are kept
@@ -523,6 +548,45 @@ add_custom_target(kit
 			${CMAKE_CURRENT_BINARY_DIR}/SEARCH-${SEARCH_K_IDENT}.tar.gz
 			SEARCH-${SEARCH_K_IDENT}
 	COMMENT "Making SEARCH-${SEARCH_K_IDENT}.tar.gz")
+
+#
+#	Packaging: a Debian package of what the installation puts down, made by
+#
+#	    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+#	    cmake --build build && (cd build && cpack -G DEB)
+#
+#	The package is laid out under the prefix of the configuration: the image
+#	looks for its help library there (SEARCH_K_HLBSPEC, <prefix>/share/help/
+#	search.hlb), and a package staged anywhere else would leave it to its
+#	fall-backs.  StarLet and HELP are static archives, so the image needs no
+#	more than the C library, which dpkg-shlibdeps names.
+#
+set(CPACK_PACKAGE_NAME			"search")
+set(CPACK_PACKAGE_VENDOR		"StarLet Squad")
+set(CPACK_PACKAGE_CONTACT		"StarLet Squad and Ruslan R. Laishev <polylab240@gmail.com>")
+set(CPACK_PACKAGE_VERSION_MAJOR		"${SEARCH_K_VMAJOR}")
+set(CPACK_PACKAGE_VERSION_MINOR		"${SEARCH_K_VMINOR}")
+set(CPACK_PACKAGE_VERSION_PATCH		"${SEARCH_K_VPATCH}")
+set(CPACK_PACKAGE_VERSION		"${SEARCH_K_VMAJOR}.${SEARCH_K_VMINOR}.${SEARCH_K_VPATCH}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY	"OpenVMS-style record search utility")
+string(CONCAT CPACK_PACKAGE_DESCRIPTION
+	"SEARCH displays the records of a set of files that carry a given combination "
+	"of strings, with the command line, the qualifiers and the display of the "
+	"OpenVMS original; /HELP is answered out of a HELP library.  "
+	"Identification ${SEARCH_K_IDENT}.")
+set(CPACK_RESOURCE_FILE_LICENSE		"${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGING_INSTALL_PREFIX	"${CMAKE_INSTALL_PREFIX}")
+set(CPACK_STRIP_FILES			ON)
+set(CPACK_VERBATIM_VARIABLES		ON)
+set(CPACK_GENERATOR			"DEB")
+
+set(CPACK_DEBIAN_FILE_NAME		DEB-DEFAULT)
+set(CPACK_DEBIAN_PACKAGE_SECTION	utils)
+set(CPACK_DEBIAN_PACKAGE_PRIORITY	optional)
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS	ON)
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE	"https://github.com/SysMan-One/Search")
+
+include(CPack)
 
 #
 #	Functional tests
